@@ -10,6 +10,12 @@ CMD ["npm", "run", "dev"]
 
 # ── production ────────────────────────────────────────────────
 FROM base AS builder
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_ML_URL
+ARG NEXT_PUBLIC_WS_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_ML_URL=$NEXT_PUBLIC_ML_URL
+ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 COPY . .
 RUN npm run build
 
