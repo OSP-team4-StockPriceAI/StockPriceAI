@@ -33,8 +33,8 @@ export function CandlestickChart({ data, ticker }: CandlestickChartProps) {
       low: data.low,
       close: data.close,
       name: ticker,
-      increasing: { line: { color: "#10b981" } },
-      decreasing: { line: { color: "#ef4444" } },
+      increasing: { line: { color: "#00c853" }, fillcolor: "#00c853" },
+      decreasing: { line: { color: "#ff1744" }, fillcolor: "#ff1744" },
     };
 
     if (!data.volume) return [candlestick];
@@ -46,15 +46,23 @@ export function CandlestickChart({ data, ticker }: CandlestickChartProps) {
       name: "Volume",
       marker: {
         color: data.close.map((c, i) =>
-          i === 0 || c >= data.close[i - 1] ? "#10b981" : "#ef4444",
+          i === 0 || c >= data.close[i - 1] ? "#00c853" : "#ff1744",
         ),
-        opacity: 0.4,
+        opacity: 0.7,
       },
       yaxis: "y2",
     };
 
     return [candlestick, volume];
   }, [data, ticker]);
+
+  const initialRange = useMemo(() => {
+    if (!data.date || data.date.length === 0) return undefined;
+    return [
+      data.date[0],
+      data.date[data.date.length - 1]
+    ];
+  }, [data.date]);
 
   const layout = useMemo(
     () => ({
@@ -64,7 +72,8 @@ export function CandlestickChart({ data, ticker }: CandlestickChartProps) {
       font: { color: "#a0aec0" },
       xaxis: {
         type: "category" as const,
-        rangeslider: { visible: false },
+        range: initialRange,
+        rangeslider: { visible: true, bordercolor: "#2d3748", bgcolor: "#1f2937" },
         gridcolor: "#2d3748",
         tickfont: { color: "#718096" },
       },
@@ -72,26 +81,26 @@ export function CandlestickChart({ data, ticker }: CandlestickChartProps) {
         title: { text: "가격 (USD)", font: { color: "#a0aec0" } },
         gridcolor: "#2d3748",
         tickfont: { color: "#718096" },
-        domain: [0.25, 1],
+        domain: [0.35, 1],
       },
       yaxis2: {
         title: { text: "거래량", font: { color: "#a0aec0" } },
         gridcolor: "#2d3748",
         tickfont: { color: "#718096" },
-        domain: [0, 0.2],
+        domain: [0, 0.25],
       },
-      margin: { t: 40, r: 20, b: 40, l: 60 },
+      margin: { t: 40, r: 20, b: 20, l: 60 },
       showlegend: false,
     }),
-    [ticker],
+    [ticker, initialRange],
   );
 
   return (
     <Plot
       data={traces}
       layout={layout}
-      config={{ responsive: true, displayModeBar: false }}
-      style={{ width: "100%", minHeight: "400px" }}
+      config={{ responsive: true, displayModeBar: true }}
+      style={{ width: "100%", minHeight: "450px" }}
     />
   );
 }

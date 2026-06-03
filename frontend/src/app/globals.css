@@ -47,3 +47,60 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #718096;
 }
+
+/* Premium UI/UX Custom Utilities */
+
+@keyframes pulse-skeleton {
+  0%, 100% {
+    opacity: 1;
+    background-color: rgba(45, 55, 72, 0.3);
+  }
+  50% {
+    opacity: .45;
+    background-color: rgba(45, 55, 72, 0.15);
+  }
+}
+
+.animate-skeleton {
+  animation: pulse-skeleton 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.glass-card {
+  background: rgba(20, 24, 37, 0.45);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(45, 55, 72, 0.45);
+  border-radius: 0.85rem;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+  background: rgba(20, 24, 37, 0.6);
+  border-color: rgba(74, 85, 104, 0.7);
+  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.55);
+}
+
+.glow-green {
+  box-shadow: 0 0 25px -4px rgba(0, 200, 83, 0.28);
+}
+
+.glow-red {
+  box-shadow: 0 0 25px -4px rgba(255, 23, 68, 0.28);
+}
+
+.glow-blue {
+  box-shadow: 0 0 25px -4px rgba(59, 130, 246, 0.25);
+}
+
+.hover-spring {
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.hover-spring:hover {
+  transform: translateY(-2px) scale(1.015);
+}
+
+.hover-spring:active {
+  transform: translateY(0px) scale(0.985);
+}

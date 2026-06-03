@@ -102,7 +102,7 @@ export const watchlistApi = {
 
 export const predictionsApi = {
   get: (ticker: string) =>
-    request<PredictionOut>(`${API_BASE}/api/v1/predictions/${ticker.toUpperCase()}`),
+    request<PredictionOut[]>(`${API_BASE}/api/v1/predictions/${ticker.toUpperCase()}`),
 };
 
 // ── Scanner ───────────────────────────────────────────────────────────────────

@@ -111,14 +111,38 @@ export interface TechnicalResponse {
 
 // ── ML — Sentiment ────────────────────────────────────────────────────────────
 
+export interface NewsItem {
+  title: string;
+  publisher: string;
+  hours_ago: number;
+  source: string;
+  compound: number;
+  label: string;
+  relevance: number;
+  relevance_tier: string;
+  news_type: string;
+  impact_score: number;
+  macro_theme?: string;
+}
+
 export interface SentimentResponse {
   ticker: string;
-  overall_sentiment: string;
-  sentiment_score: number;
+  signal: string;
+  avg_sentiment: number;
+  time_weighted_avg: number;
+  raw_avg: number;
+  impact_score_avg: number;
+  positive_pct: number;
+  negative_pct: number;
+  neutral_pct: number;
   news_count: number;
-  positive_count: number;
-  negative_count: number;
-  neutral_count: number;
+  direct_news_count: number;
+  surprise_count: number;
+  structural_count: number;
+  macro_themes: string[];
+  model: string;
+  sources: string[];
+  news: NewsItem[];
 }
 
 // ── ML — Predict ──────────────────────────────────────────────────────────────

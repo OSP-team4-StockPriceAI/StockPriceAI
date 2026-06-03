@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 
 from app.core.config import settings
 from app.core.redis import ml_redis_client
-from app.schemas.stock import StockInfo
+from app.schemas.stock import Candle, StockInfo
 
 logger = logging.getLogger("stockai.backend.services.stock")
 
@@ -38,6 +38,7 @@ async def fetch_stock_info(ticker: str) -> StockInfo:
        새롭게 저장된 캐시 데이터를 다시 조회하여 최종 결합 반환합니다.
     """
     ticker_upper = ticker.upper().strip()
+    cache_payload = {}
     
     # 캐시 키 정의
     normalized_ticker = ticker_upper
@@ -70,6 +71,20 @@ async def fetch_stock_info(ticker: str) -> StockInfo:
 
     # 2. 캐시가 적중되었고 기본 정보가 온전하다면 바로 반환 (네트워크 호출 제거로 성능 극대화)
     if cache_found and info:
+        candles = []
+        history = cache_payload.get("history", [])
+        for c in history:
+            if isinstance(c, dict):
+                candles.append(
+                    Candle(
+                        Date=c.get("Date"),
+                        Open=c.get("Open"),
+                        High=c.get("High"),
+                        Low=c.get("Low"),
+                        Close=c.get("Close"),
+                        Volume=c.get("Volume"),
+                    )
+                )
         return StockInfo(
             ticker=ticker_upper,
             name=info.get("longName") or info.get("shortName") or ticker_upper,
@@ -78,6 +93,7 @@ async def fetch_stock_info(ticker: str) -> StockInfo:
             market_cap=info.get("marketCap") or 0.0,
             current_price=cached_price,
             currency=info.get("currency") or "USD",
+            history=candles,
         )
 
     # 3. 2차 관문: 캐시 미적중 시, ML 서비스를 직접 호출하여 새로운 캐시 생성 유도
@@ -122,6 +138,21 @@ async def fetch_stock_info(ticker: str) -> StockInfo:
         logger.error(f"❌ [{ticker_upper}] ML 호출 후 Redis 캐시 재조회 오류: {str(e)}")
 
     # 5. 최종 데이터 조합 반환 (모든 필드 매핑)
+    candles = []
+    history = cache_payload.get("history", []) if cache_payload else []
+    for c in history:
+        if isinstance(c, dict):
+            candles.append(
+                Candle(
+                    Date=c.get("Date"),
+                    Open=c.get("Open"),
+                    High=c.get("High"),
+                    Low=c.get("Low"),
+                    Close=c.get("Close"),
+                    Volume=c.get("Volume"),
+                )
+            )
+
     return StockInfo(
         ticker=ticker_upper,
         name=info.get("longName") or info.get("shortName") or ticker_upper,
@@ -130,4 +161,5 @@ async def fetch_stock_info(ticker: str) -> StockInfo:
         market_cap=info.get("marketCap") or 0.0,
         current_price=indicators.get("close"),
         currency=info.get("currency") or "USD",
+        history=candles,
     )

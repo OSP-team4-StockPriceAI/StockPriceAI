@@ -19,11 +19,6 @@ export default function WatchlistPage() {
             등록한 종목의 현재가와 AI 신호를 한눈에 확인합니다
           </p>
         </div>
-        {!isAuthenticated && (
-          <Button variant="secondary" size="sm" onClick={() => setShowAuthModal(true)}>
-            로그인
-          </Button>
-        )}
       </div>
 
       {isAuthenticated ? (

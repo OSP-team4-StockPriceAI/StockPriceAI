@@ -100,8 +100,9 @@ export default function ScannerPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
+    <div className="flex flex-col lg:flex-row gap-6 relative items-start">
+      <div className="flex-1 space-y-6 min-w-0">
+        <div>
         <h1 className="text-2xl font-bold text-[#e2e8f0]">S&P 500 스캐너</h1>
         <p className="mt-1 text-sm text-[#718096]">
           AI 기반 배치 분석으로 매수 신호 종목을 스크리닝합니다
@@ -109,7 +110,7 @@ export default function ScannerPage() {
       </div>
 
       {/* 스캔 설정 */}
-      <Card className="space-y-4">
+      <Card id="scan-settings" className="space-y-4 scroll-mt-24">
         <h2 className="text-base font-semibold text-[#e2e8f0]">스캔 설정</h2>
         <div className="flex flex-wrap gap-3 items-end">
           <div className="flex-1 min-w-48">
@@ -151,7 +152,7 @@ export default function ScannerPage() {
 
       {/* 진행 중 상태 */}
       {activeJob && (activeJob.status === "running" || activeJob.status === "pending") && (
-        <div className="space-y-2">
+        <div id="scan-progress" className="space-y-2 scroll-mt-24">
           <ScannerProgress
             job={activeJob}
             onProgress={handleProgress}
@@ -165,12 +166,14 @@ export default function ScannerPage() {
 
       {/* 스캔 결과 */}
       {results && results.length > 0 && (
-        <ScanResults results={results} />
+        <div id="scan-results" className="scroll-mt-24">
+          <ScanResults results={results} />
+        </div>
       )}
 
       {/* 최근 작업 목록 */}
       {isAuthenticated && (
-        <Card className="space-y-3">
+        <Card id="recent-jobs" className="space-y-3 scroll-mt-24">
           <h2 className="text-base font-semibold text-[#e2e8f0]">최근 스캔 작업</h2>
           {jobsLoading ? (
             <FullPageSpinner />
@@ -202,6 +205,28 @@ export default function ScannerPage() {
           )}
         </Card>
       )}
+
+      </div>
+
+      {/* 빠른 이동 목차 (TOC) */}
+      <div className="hidden lg:block w-48 shrink-0 sticky top-24 self-start">
+        <div className="flex flex-col gap-2 p-4 rounded-xl bg-[#1a202c]/60 border border-[#2d3748]/60 backdrop-blur-md shadow-lg">
+          <span className="text-xs font-bold text-[#a0aec0] mb-1 uppercase tracking-wider flex items-center gap-2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+            빠른 이동
+          </span>
+          <a href="#scan-settings" className="text-sm text-[#718096] hover:text-[#3b82f6] hover:bg-[#2d3748]/30 px-2 py-1.5 rounded-md transition-all">스캔 설정</a>
+          {activeJob && (activeJob.status === "running" || activeJob.status === "pending") && (
+            <a href="#scan-progress" className="text-sm text-[#718096] hover:text-[#3b82f6] hover:bg-[#2d3748]/30 px-2 py-1.5 rounded-md transition-all">진행 상태</a>
+          )}
+          {results && results.length > 0 && (
+            <a href="#scan-results" className="text-sm text-[#718096] hover:text-[#3b82f6] hover:bg-[#2d3748]/30 px-2 py-1.5 rounded-md transition-all">스캔 결과</a>
+          )}
+          {isAuthenticated && (
+            <a href="#recent-jobs" className="text-sm text-[#718096] hover:text-[#3b82f6] hover:bg-[#2d3748]/30 px-2 py-1.5 rounded-md transition-all">최근 작업 목록</a>
+          )}
+        </div>
+      </div>
 
       {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
     </div>

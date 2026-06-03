@@ -23,7 +23,7 @@ interface TabPanelProps {
 export function Tabs({ tabs, activeTab, onChange, children }: TabsProps) {
   return (
     <div>
-      <div className="flex gap-1 border-b border-[#2d3748] overflow-x-auto">
+      <div className="flex gap-1 border-b border-[#2d3748] overflow-x-auto overflow-y-hidden">
         {tabs.map((tab) => (
           <button
             key={tab.id}

@@ -7,13 +7,13 @@ interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
 }
 
 const variantClasses: Record<BadgeVariant, string> = {
-  buy: "bg-emerald-900/50 text-emerald-400 border-emerald-700",
-  sell: "bg-red-900/50 text-red-400 border-red-700",
-  hold: "bg-yellow-900/50 text-yellow-400 border-yellow-700",
-  success: "bg-emerald-900/50 text-emerald-400 border-emerald-700",
-  warning: "bg-yellow-900/50 text-yellow-400 border-yellow-700",
-  danger: "bg-red-900/50 text-red-400 border-red-700",
-  default: "bg-[#2d3748] text-[#a0aec0] border-[#4a5568]",
+  buy: "bg-emerald-950/75 text-[#00c853] border-[#00c853]/45 shadow-[0_0_12px_rgba(0,200,83,0.18)]",
+  sell: "bg-red-950/75 text-[#ff1744] border-[#ff1744]/45 shadow-[0_0_12px_rgba(255,23,68,0.18)]",
+  hold: "bg-amber-950/75 text-amber-400 border-amber-500/45 shadow-[0_0_12px_rgba(245,158,11,0.15)]",
+  success: "bg-emerald-950/75 text-[#00c853] border-[#00c853]/45 shadow-[0_0_12px_rgba(0,200,83,0.18)]",
+  warning: "bg-amber-950/75 text-amber-400 border-amber-500/45 shadow-[0_0_12px_rgba(245,158,11,0.15)]",
+  danger: "bg-red-950/75 text-[#ff1744] border-[#ff1744]/45 shadow-[0_0_12px_rgba(255,23,68,0.18)]",
+  default: "bg-[#2d3748]/60 text-[#a0aec0] border-[#4a5568]/60",
 };
 
 export function Badge({ variant = "default", className = "", children, ...props }: BadgeProps) {

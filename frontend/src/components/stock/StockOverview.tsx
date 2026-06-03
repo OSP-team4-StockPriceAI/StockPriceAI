@@ -1,10 +1,10 @@
 import { Card } from "@/components/ui/card";
 import { Badge, signalToBadgeVariant } from "@/components/ui/badge";
-import type { PredictResponse, StockInfo } from "@/types/api";
+import type { PredictionOut, StockInfo } from "@/types/api";
 
 interface StockOverviewProps {
   stockInfo: StockInfo;
-  prediction?: PredictResponse;
+  prediction?: PredictionOut;
 }
 
 function formatMarketCap(cap?: number): string {
