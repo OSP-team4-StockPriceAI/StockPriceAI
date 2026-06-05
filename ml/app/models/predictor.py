@@ -456,7 +456,7 @@ class LSTMPredictor:
         split = int(len(X_seq) * 0.8)
 
         def to_t(a: npt.NDArray[Any]) -> Any:
-            return torch.tensor(a.astype("float32")).to(device)
+            return torch.tensor(a, dtype=torch.float32, device=device)
 
         Xtr, Xvl = to_t(X_seq[:split]), to_t(X_seq[split:])
         ytr, yvl = to_t(y_seq[:split].astype("float32")), to_t(y_seq[split:].astype("float32"))
@@ -605,7 +605,7 @@ class LSTMPredictor:
                 device = next(self.model.parameters()).device
                 self.model.eval()
                 with torch.no_grad():
-                    t = torch.tensor(X_seq.astype("float32")).to(device)
+                    t = torch.tensor(X_seq, dtype=torch.float32, device=device)
                     return float(self.model(t)[0].cpu().item())
             else:
                 return float(self.model.predict(X_seq, verbose=0)[0, 0])
@@ -780,9 +780,9 @@ class EnsemblePredictor:
 def _build_result(up_prob: float, model_name: str) -> dict[str, Any]:
     down_prob = 1.0 - up_prob
     confidence = max(up_prob, down_prob)
-    if up_prob > 0.58:
+    if up_prob > 0.65:
         signal = "BUY"
-    elif down_prob > 0.58:
+    elif down_prob > 0.55:
         signal = "SELL"
     else:
         signal = "HOLD"

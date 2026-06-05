@@ -1,12 +1,20 @@
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["REDIS_URL"] = "redis://localhost:6379/1"
+
+import torch
+torch.set_num_threads(1)
 
 import pandas as pd
 import numpy as np
 from datetime import datetime
 
 from ml.app.models.predictor import EnsemblePredictor
-from ml.app.models.new_predictor import LSTMFirstStackingPredictor
 from ml.app.pipelines.fetcher import fetch_stock_data
 from ml.app.pipelines.technical import add_all_indicators
 from ml.app.pipelines.get_recent_SP500_tickers import get_sp500_tickers
@@ -100,7 +108,7 @@ def analyze_single_ticker_as_of(ticker: str, df_as_of: pd.DataFrame, info: dict,
             "rsi": round(rsi, 1),
             "ml_signal": pred["signal"],
         }
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -397,20 +405,10 @@ def run_backtest_simulation(
     }
 
 
-# 두 시뮬레이션 순차적으로 실행
+# 오리지널 앙상블 단독 실행
 orig_res = run_backtest_simulation(
     model_name="Original Ensemble (XGB -> LSTM)",
     model_cls=EnsemblePredictor,
-    stock_data_dict=stock_data_dict,
-    tickers=TICKERS,
-    start_idx=start_idx,
-    total_days=total_days,
-    sample_df=sample_df,
-)
-
-new_res = run_backtest_simulation(
-    model_name="LSTM-First Stacking (LSTM -> XGB)",
-    model_cls=LSTMFirstStackingPredictor,
     stock_data_dict=stock_data_dict,
     tickers=TICKERS,
     start_idx=start_idx,
@@ -427,19 +425,11 @@ comparison_data = [
         "Cumulative Return": f"{orig_res['total_return_pct']:.2f}%",
         "Win Rate (Sells)": f"{orig_res['win_rate']:.1f}%",
         "Direction Hit Rate": f"{orig_res['hit_rate']:.1f}%",
-    },
-    {
-        "Model Name": new_res["model_name"],
-        "Initial Capital": f"${new_res['initial_capital']:,.2f}",
-        "Final Value": f"${new_res['final_cash']:,.2f}",
-        "Cumulative Return": f"{new_res['total_return_pct']:.2f}%",
-        "Win Rate (Sells)": f"{new_res['win_rate']:.1f}%",
-        "Direction Hit Rate": f"{new_res['hit_rate']:.1f}%",
     }
 ]
 
 print("\n" + "=" * 90)
-print("             📊 모델 성과 및 적중률(Hit Rate) 최종 비교 요약")
+print("             📊 오리지널 앙상블 모델 성과 및 적중률(Hit Rate) 최종 요약")
 print("=" * 90)
 print(tabulate(comparison_data))
 print("=" * 90)
