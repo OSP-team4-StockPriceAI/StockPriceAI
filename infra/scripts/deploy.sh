@@ -9,7 +9,7 @@ cd "$APP_DIR"
 git pull origin main
 
 echo "[deploy] Building and restarting services..."
-docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+/usr/local/bin/docker-compose -f docker-compose.yml -f docker-compose.prod.yml \
   up --build -d --remove-orphans
 
 echo "[deploy] Waiting for health checks..."

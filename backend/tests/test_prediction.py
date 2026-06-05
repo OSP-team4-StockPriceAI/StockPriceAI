@@ -1,9 +1,10 @@
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 from sqlalchemy.orm import Session
 
 from app.models.prediction import Prediction
-from app.services.prediction import get_or_fetch_predictions, _call_ml_predict
+from app.services.prediction import get_or_fetch_predictions
 
 
 @pytest.mark.asyncio

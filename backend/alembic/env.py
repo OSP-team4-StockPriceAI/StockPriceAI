@@ -10,9 +10,9 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Import models so Alembic can detect schema changes
+import app.models  # noqa: E402, F401
 from app.core.config import settings  # noqa: E402
 from app.core.database import Base  # noqa: E402
-import app.models  # noqa: E402, F401
 
 target_metadata = Base.metadata
 
