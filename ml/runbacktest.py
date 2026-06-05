@@ -1,6 +1,15 @@
 import os
+# Prevent multiple OpenMP runtimes and limit threads early
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["REDIS_URL"] = "redis://localhost:6379/1"
 
+import torch
+torch.set_num_threads(1)
 import pandas as pd
 import numpy as np
 from datetime import datetime
