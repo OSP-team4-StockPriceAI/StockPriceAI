@@ -92,7 +92,7 @@ def fetch_stock_data(
             hist = stock.history(period="max", auto_adjust=True)
         else:
             end_date = datetime.now()
-            start_date = end_date - timedelta(days=period_days + 200)
+            start_date = end_date - timedelta(days=period_days + 365)
             hist = stock.history(start=start_date, end=end_date, auto_adjust=True)
 
         if hist.empty or len(hist) < 30:
