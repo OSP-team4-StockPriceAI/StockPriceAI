@@ -2,6 +2,8 @@
 
 import dynamic from "next/dynamic";
 import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { stocksApi } from "@/lib/api";
 import { FullPageSpinner } from "@/components/ui/spinner";
 
 const Plot = dynamic(() => import("react-plotly.js"), {
@@ -24,29 +26,75 @@ interface CandlestickChartProps {
 }
 
 export function CandlestickChart({ data, ticker }: CandlestickChartProps) {
+  // Fetch real stock details containing cached yfinance history candles from DB 1 Redis
+  const { data: stockInfo } = useQuery({
+    queryKey: ["stock", ticker],
+    queryFn: () => stocksApi.get(ticker),
+    enabled: !!ticker,
+  });
+
+  const processedData = useMemo(() => {
+    if (stockInfo?.history && stockInfo.history.length > 0) {
+      const len = data.date.length;
+      
+      let sliceCount = 252; // Default to 1Y
+      if (len <= 22) {
+        sliceCount = 22; // 1M
+      } else if (len <= 65) {
+        sliceCount = 65; // 3M
+      } else if (len <= 252) {
+        sliceCount = 252; // 1Y
+      } else {
+        sliceCount = stockInfo.history.length; // 5Y / ALL: show all available candles
+      }
+      
+      const historySlice = stockInfo.history.slice(-sliceCount);
+      
+      const date: string[] = [];
+      const open: number[] = [];
+      const high: number[] = [];
+      const low: number[] = [];
+      const close: number[] = [];
+      const volume: number[] = [];
+      
+      historySlice.forEach((item) => {
+        const dStr = item.Date ? item.Date.split("T")[0] : "";
+        date.push(dStr);
+        open.push(item.Open ?? 0);
+        high.push(item.High ?? 0);
+        low.push(item.Low ?? 0);
+        close.push(item.Close ?? 0);
+        volume.push(item.Volume ?? 0);
+      });
+      
+      return { date, open, high, low, close, volume };
+    }
+    return data;
+  }, [data, stockInfo]);
+
   const traces = useMemo(() => {
     const candlestick = {
       type: "candlestick" as const,
-      x: data.date,
-      open: data.open,
-      high: data.high,
-      low: data.low,
-      close: data.close,
+      x: processedData.date,
+      open: processedData.open,
+      high: processedData.high,
+      low: processedData.low,
+      close: processedData.close,
       name: ticker,
       increasing: { line: { color: "#00c853" }, fillcolor: "#00c853" },
       decreasing: { line: { color: "#ff1744" }, fillcolor: "#ff1744" },
     };
 
-    if (!data.volume) return [candlestick];
+    if (!processedData.volume) return [candlestick];
 
     const volume = {
       type: "bar" as const,
-      x: data.date,
-      y: data.volume,
+      x: processedData.date,
+      y: processedData.volume,
       name: "Volume",
       marker: {
-        color: data.close.map((c, i) =>
-          i === 0 || c >= data.close[i - 1] ? "#00c853" : "#ff1744",
+        color: processedData.close.map((c, i) =>
+          i === 0 || c >= processedData.close[i - 1] ? "#00c853" : "#ff1744",
         ),
         opacity: 0.7,
       },
@@ -54,15 +102,15 @@ export function CandlestickChart({ data, ticker }: CandlestickChartProps) {
     };
 
     return [candlestick, volume];
-  }, [data, ticker]);
+  }, [processedData, ticker]);
 
   const initialRange = useMemo(() => {
-    if (!data.date || data.date.length === 0) return undefined;
+    if (!processedData.date || processedData.date.length === 0) return undefined;
     return [
-      data.date[0],
-      data.date[data.date.length - 1]
+      processedData.date[0],
+      processedData.date[processedData.date.length - 1]
     ];
-  }, [data.date]);
+  }, [processedData.date]);
 
   const layout = useMemo(
     () => ({
