@@ -215,13 +215,34 @@ def run_backtest_simulation(
         is_scan_day = (i == start_idx) or (SCAN_REFRESH_INTERVAL_DAYS > 0 and (i - start_idx) % SCAN_REFRESH_INTERVAL_DAYS == 0)
         
         if is_scan_day:
-            print(f"\n   🔄 [{model_name} 스캐너 갱신일: {current_date}] 상위 {TOP_N_STOCKS}개 종목 스캔 중...")
+            print(f"\n   🔄 [{model_name} 스캐너 갱신일: {current_date}] 상위 {TOP_N_STOCKS}개 종목 스캔 중... (총 {len(stock_data_dict)}개 종목)")
             scan_results = []
-            for ticker, (df, info) in stock_data_dict.items():
+            scan_count = 0
+            
+            def scan_ticker_wrapper(ticker_and_data):
+                """각 종목 분석 (병렬 실행용)"""
+                ticker, (df, info) = ticker_and_data
                 df_as_of = df.loc[:current_date].iloc[:-1]
-                res = analyze_single_ticker_as_of(ticker, df_as_of, info, model_cls)
-                if res:
-                    scan_results.append(res)
+                return ticker, analyze_single_ticker_as_of(ticker, df_as_of, info, model_cls)
+            
+            # 병렬 스캔 (8개 스레드)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as scan_executor:
+                futures = {scan_executor.submit(scan_ticker_wrapper, (ticker, (df, info))): ticker 
+                          for ticker, (df, info) in stock_data_dict.items()}
+                
+                for future in concurrent.futures.as_completed(futures):
+                    scan_count += 1
+                    ticker, res = future.result()
+                    if res:
+                        scan_results.append(res)
+                    
+                    # 10개 단위 또는 마지막에 진행률 표시
+                    if scan_count % 10 == 0 or scan_count == len(stock_data_dict):
+                        progress_pct = int(scan_count * 100 / len(stock_data_dict))
+                        bar_length = 20
+                        filled = int(bar_length * scan_count / len(stock_data_dict))
+                        bar = "█" * filled + "░" * (bar_length - filled)
+                        print(f"      [스캔 진행률] {bar} {scan_count:3d}/{len(stock_data_dict):3d} ({progress_pct:3d}%)", flush=True)
             
             if len(scan_results) > 0:
                 df_scan = pd.DataFrame(scan_results)
