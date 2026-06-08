@@ -74,6 +74,15 @@ def predict_lstm_history_proba(lstm_pred: LSTMPredictor, df: pd.DataFrame) -> np
     return res_series.values
 
 
+def _split_time_series_train_val(
+    X: np.ndarray, y: np.ndarray, val_ratio: float = 0.2
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """시계열 데이터에서 마지막 val_ratio 만큼을 검증 데이터로 분리합니다."""
+    val_count = max(1, int(len(X) * val_ratio))
+    split = len(X) - val_count
+    return X[:split], y[:split], X[split:], y[split:]
+
+
 class NewXGBoostPredictor(XGBoostPredictor):
     """지정된 커스텀 피처 리스트(예: LSTM_Proba 포함)로 학습할 수 있도록 확장한 XGBoost 예측기"""
 
@@ -150,7 +159,11 @@ class NewXGBoostPredictor(XGBoostPredictor):
         self._cv_proba = oof_proba
         log.info(f"New XGBoost CV 평균 정확도: {float(np.mean(cv_scores)):.3f} ({time.time()-t0:.1f}s)")
 
-        X_sc = self.scaler.fit_transform(X)
+        X_train, y_train, X_val, y_val = _split_time_series_train_val(X, y, val_ratio=0.2)
+        self.scaler = StandardScaler()
+        X_train_sc = self.scaler.fit_transform(X_train)
+        X_val_sc = self.scaler.transform(X_val)
+
         self.model = xgb.XGBClassifier(
             n_estimators=n_est_fin,
             max_depth=4,
@@ -170,21 +183,24 @@ class NewXGBoostPredictor(XGBoostPredictor):
             max_bin=xgb_cfg["max_bin"],
             grow_policy=xgb_cfg["grow_policy"],
         )
-        self.model.fit(X_sc, y, verbose=False)
+        self.model.fit(X_train_sc, y_train, eval_set=[(X_val_sc, y_val)], verbose=False)
         self.is_trained = True
 
         self.feature_importances_ = pd.Series(
             self.model.feature_importances_, index=self.feature_cols
         ).sort_values(ascending=False)
 
-        y_pred = self.model.predict(X_sc)
+        y_train_pred = self.model.predict(X_train_sc)
+        y_val_pred = self.model.predict(X_val_sc)
         self.training_metrics = {
             "cv_accuracy_mean": float(np.mean(cv_scores)),
             "cv_accuracy_std": float(np.std(cv_scores)),
-            "train_accuracy": float(accuracy_score(y, y_pred)),
+            "train_accuracy": float(accuracy_score(y_train, y_train_pred)),
+            "validation_accuracy": float(accuracy_score(y_val, y_val_pred)),
             "model_type": "NewXGBoost",
             "n_features": len(self.feature_cols),
-            "n_samples": len(y),
+            "n_samples": len(y_train),
+            "n_samples_validation": len(y_val),
             "n_samples_total": raw_len,
         }
         return self.training_metrics
@@ -207,23 +223,30 @@ class NewXGBoostPredictor(XGBoostPredictor):
         if X is None or y is None:
             return {"error": "학습 데이터 부족"}
 
-        X_sc = self.scaler.fit_transform(X)
+        X_train, y_train, X_val, y_val = _split_time_series_train_val(X, y, val_ratio=0.2)
+        self.scaler = StandardScaler()
+        X_train_sc = self.scaler.fit_transform(X_train)
+        X_val_sc = self.scaler.transform(X_val)
+
         self.model = GradientBoostingClassifier(
             n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, random_state=42
         )
-        self.model.fit(X_sc, y)
+        self.model.fit(X_train_sc, y_train)
         self.is_trained = True
 
         self.feature_importances_ = pd.Series(
             self.model.feature_importances_, index=self.feature_cols
         ).sort_values(ascending=False)
 
-        y_pred = self.model.predict(X_sc)
+        y_train_pred = self.model.predict(X_train_sc)
+        y_val_pred = self.model.predict(X_val_sc)
         self.training_metrics = {
-            "train_accuracy": float(accuracy_score(y, y_pred)),
+            "train_accuracy": float(accuracy_score(y_train, y_train_pred)),
+            "validation_accuracy": float(accuracy_score(y_val, y_val_pred)),
             "model_type": "GradientBoosting (sklearn)",
             "n_features": len(self.feature_cols),
-            "n_samples": len(y),
+            "n_samples": len(y_train),
+            "n_samples_validation": len(y_val),
         }
         return self.training_metrics
 
