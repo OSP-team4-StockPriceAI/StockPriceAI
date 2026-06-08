@@ -55,22 +55,8 @@ def predict_lstm_history_proba(lstm_pred: LSTMPredictor, df: pd.DataFrame) -> pd
 
     X = work.values.astype(np.float32)
     X_sc = lstm_pred.scaler.transform(X)
-    probs = np.full(len(df), 0.5, dtype=float)
-
-    if len(X_sc) >= SEQ:
-        X_seq = np.array([X_sc[i - SEQ:i] for i in range(SEQ, len(X_sc))])
-        if lstm_pred.framework == "pytorch":
-            import torch
-            device = next(lstm_pred.model.parameters()).device
-            lstm_pred.model.eval()
-            with torch.no_grad():
-                t = torch.tensor(X_seq, dtype=torch.float32, device=device)
-                preds = lstm_pred.model(t).cpu().numpy().flatten()
-                probs[SEQ:] = preds
-        else:
-            preds = lstm_pred.model.predict(X_seq, verbose=0).flatten()
-            probs[SEQ:] = preds
-
+    
+    probs = _predict_lstm_on_scaled_features(lstm_pred, X_sc, SEQ)
     return pd.Series(probs, index=df.index)
 
 
@@ -92,6 +78,34 @@ def _split_time_series_df(
     return df.iloc[:split], df.iloc[split:]
 
 
+def _predict_lstm_on_scaled_features(
+    lstm_pred: LSTMPredictor,
+    X_sc: npt.NDArray[Any],
+    sequence_length: int,
+) -> npt.NDArray[Any]:
+    """이미 스케일링된 배열 X_sc에 대해서만 LSTM 추론을 수행합니다 (초고속)."""
+    probs = np.full(len(X_sc), 0.5, dtype=float)
+    
+    if len(X_sc) < sequence_length:
+        return probs
+    
+    X_seq = np.array([X_sc[i - sequence_length:i] for i in range(sequence_length, len(X_sc))])
+    
+    if lstm_pred.framework == "pytorch":
+        import torch
+        device = next(lstm_pred.model.parameters()).device
+        lstm_pred.model.eval()
+        with torch.no_grad():
+            t = torch.tensor(X_seq, dtype=torch.float32, device=device)
+            preds = lstm_pred.model(t).cpu().numpy().flatten()
+            probs[sequence_length:] = preds
+    else:
+        preds = lstm_pred.model.predict(X_seq, verbose=0).flatten()
+        probs[sequence_length:] = preds
+    
+    return probs
+
+
 def _compute_oof_lstm_proba(
     df: pd.DataFrame,
     sequence_length: int,
@@ -99,7 +113,7 @@ def _compute_oof_lstm_proba(
     n_splits: int = 5,
     scanner_mode: bool = False,
 ) -> pd.Series:
-    """시간 순서대로 fold를 돌며 깨끗한 OOF LSTM 확률을 생성합니다."""
+    """시간 순서대로 fold를 돌며 깨끗한 OOF LSTM 확률을 생성합니다 (최적화됨)."""
     oof = pd.Series(0.5, index=df.index, dtype=float)
     if len(df) < sequence_length + 20:
         return oof
@@ -109,6 +123,13 @@ def _compute_oof_lstm_proba(
         return oof
 
     feature_cols = get_feature_columns(df, include_sentiment)
+    
+    # 루프 밖에서 한 번만 전체 df 준비 (스케일링, 결측치 처리)
+    work = df[feature_cols].copy()
+    work = work.ffill().bfill().fillna(0)
+    work = work.replace([np.inf, -np.inf], 0).clip(-10, 10)
+    X_full = work.values.astype(np.float32)
+    
     tscv = TimeSeriesSplit(n_splits=n_splits)
 
     for train_idx, val_idx in tscv.split(df):
@@ -118,11 +139,18 @@ def _compute_oof_lstm_proba(
         if "error" in fold_metrics:
             continue
 
+        # 준비된 X_full을 해당 폴드의 scaler로 변환하고, 필요한 부분만 추론
         start_idx = max(0, val_idx[0] - sequence_length)
-        df_val_context = df.iloc[start_idx : val_idx[-1] + 1]
-        val_proba = predict_lstm_history_proba(fold_lstm, df_val_context)
+        end_idx = val_idx[-1] + 1
+        
+        X_sc = fold_lstm.scaler.transform(X_full[start_idx:end_idx])
+        fold_probs = _predict_lstm_on_scaled_features(fold_lstm, X_sc, sequence_length)
+        
+        # val_idx에 해당하는 인덱스만 OOF에 저장
+        val_start_offset = val_idx[0] - start_idx
+        val_end_offset = val_start_offset + len(val_idx)
         val_index = df.iloc[val_idx].index
-        oof.loc[val_index] = val_proba.loc[val_index]
+        oof.loc[val_index] = fold_probs[val_start_offset:val_end_offset]
 
     return oof
 
