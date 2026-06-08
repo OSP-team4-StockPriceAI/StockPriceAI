@@ -58,6 +58,9 @@ BASE_FEATURES = [
     "Return_1d", "Return_3d", "Return_5d", "Return_10d", "Return_20d",
     "Price_vs_MA20", "Price_vs_MA50",
     "MA5_vs_MA20", "MA20_vs_MA50",
+    "MA_Alignment_Spread", "MA_Alignment_Ratio",
+    "ADX14", "Plus_DI", "Minus_DI",
+    "Regime_Prob_Bull", "Regime_Prob_Bear", "Regime_Prob_Sideways",
     "Price_Position_20d",
     "Body_Size", "Upper_Shadow", "Lower_Shadow", "Is_Bullish",
     "Momentum_Normalized", "MACD_Cross",
@@ -199,13 +202,33 @@ class RegimeDetector:
         else:
             scores["bb_breakout"] = 0.2
 
+        if "ADX14" in recent.columns:
+            adx = recent["ADX14"].dropna()
+            if len(adx) > 5:
+                scores["trend_strength"] = float(np.clip(adx.mean() / 50, 0, 1))
+            else:
+                scores["trend_strength"] = 0.3
+        else:
+            scores["trend_strength"] = 0.3
+
+        if "MA_Alignment_Spread" in recent.columns:
+            spread = recent["MA_Alignment_Spread"].dropna()
+            if len(spread) > 5:
+                scores["alignment_strength"] = float(np.clip((spread.mean() - 0.02) / 0.15, 0, 1))
+            else:
+                scores["alignment_strength"] = 0.3
+        else:
+            scores["alignment_strength"] = 0.3
+
         weights = {
-            "volatility": 0.30,
-            "trend_inconsistency": 0.25,
-            "rsi_extremes": 0.15,
-            "macd_cross_freq": 0.15,
-            "momentum_reversal": 0.10,
-            "bb_breakout": 0.05,
+            "volatility": 0.25,
+            "trend_inconsistency": 0.20,
+            "trend_strength": 0.15,
+            "alignment_strength": 0.15,
+            "rsi_extremes": 0.10,
+            "macd_cross_freq": 0.10,
+            "momentum_reversal": 0.03,
+            "bb_breakout": 0.02,
         }
         complexity = float(np.clip(sum(scores.get(k, 0) * w for k, w in weights.items()), 0, 1))
 

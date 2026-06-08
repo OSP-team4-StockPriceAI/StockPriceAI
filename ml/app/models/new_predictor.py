@@ -63,7 +63,7 @@ def predict_lstm_history_proba(lstm_pred: LSTMPredictor, df: pd.DataFrame) -> pd
 def _split_time_series_train_val(
     X: np.ndarray, y: np.ndarray, val_ratio: float = 0.2
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """시계열 데이터에서 마지막 val_ratio 만큼을 검증 데이터로 분리합니다."""
+
     val_count = max(1, int(len(X) * val_ratio))
     split = len(X) - val_count
     return X[:split], y[:split], X[split:], y[split:]
@@ -72,7 +72,7 @@ def _split_time_series_train_val(
 def _split_time_series_df(
     df: pd.DataFrame, val_ratio: float = 0.2
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """시계열 데이터프레임을 마지막 val_ratio 만큼의 검증 데이터로 나눕니다."""
+   
     val_count = max(1, int(len(df) * val_ratio))
     split = len(df) - val_count
     return df.iloc[:split], df.iloc[split:]
@@ -83,7 +83,7 @@ def _predict_lstm_on_scaled_features(
     X_sc: npt.NDArray[Any],
     sequence_length: int,
 ) -> npt.NDArray[Any]:
-    """이미 스케일링된 배열 X_sc에 대해서만 LSTM 추론을 수행합니다 (초고속)."""
+  
     probs = np.full(len(X_sc), 0.5, dtype=float)
     
     if len(X_sc) < sequence_length:

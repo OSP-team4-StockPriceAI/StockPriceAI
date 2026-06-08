@@ -49,6 +49,67 @@ def calculate_atr(df: pd.DataFrame, window: int = 14) -> pd.Series:
     return tr.ewm(com=window - 1, min_periods=window).mean()
 
 
+def calculate_directional_indicators(
+    df: pd.DataFrame, window: int = 14
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    hi, lo = df["High"], df["Low"]
+    prev_hi, prev_lo = hi.shift(1), lo.shift(1)
+
+    up_move = hi - prev_hi
+    down_move = prev_lo - lo
+    plus_dm = pd.Series(
+        np.where((up_move > down_move) & (up_move > 0), up_move, 0.0),
+        index=df.index,
+    )
+    minus_dm = pd.Series(
+        np.where((down_move > up_move) & (down_move > 0), down_move, 0.0),
+        index=df.index,
+    )
+
+    plus_dm_smooth = plus_dm.ewm(com=window - 1, min_periods=window).mean()
+    minus_dm_smooth = minus_dm.ewm(com=window - 1, min_periods=window).mean()
+    atr = calculate_atr(df, window).replace(0, np.nan)
+
+    plus_di = (100 * plus_dm_smooth / atr).fillna(0).astype("float32")
+    minus_di = (100 * minus_dm_smooth / atr).fillna(0).astype("float32")
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di).replace(0, np.nan)).fillna(0) * 100
+    adx = dx.ewm(com=window - 1, min_periods=window).mean().fillna(0).astype("float32")
+
+    return plus_di, minus_di, adx
+
+
+def calculate_regime_probabilities(
+    ma5: pd.Series,
+    ma20: pd.Series,
+    ma50: pd.Series,
+    plus_di: pd.Series,
+    minus_di: pd.Series,
+    adx: pd.Series,
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    ma_bias_short = ((ma5 - ma20) / ma20).replace([np.inf, -np.inf], 0).fillna(0)
+    ma_bias_mid = ((ma20 - ma50) / ma50).replace([np.inf, -np.inf], 0).fillna(0)
+    alignment = ((ma_bias_short + ma_bias_mid) / 2).clip(-1, 1)
+
+    directional = (
+        (plus_di - minus_di) / (plus_di + minus_di).replace(0, np.nan)
+    ).fillna(0).clip(-1, 1)
+    trend_strength = (adx / 100).clip(0, 1)
+
+    bull = np.clip(
+        0.7 * np.tanh(alignment * 5) + 0.2 * np.maximum(directional, 0) + 0.1 * trend_strength,
+        0,
+        1,
+    ).astype("float32")
+    bear = np.clip(
+        0.7 * np.tanh(-alignment * 5) + 0.2 * np.maximum(-directional, 0) + 0.1 * trend_strength,
+        0,
+        1,
+    ).astype("float32")
+    sideways = (1.0 - np.clip(bull + bear, 0, 1)).astype("float32")
+
+    return bull, bear, sideways
+
+
 def calculate_obv(df: pd.DataFrame) -> pd.Series:
     direction = df["Close"].diff().apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
     return (direction * df["Volume"]).cumsum()
@@ -150,6 +211,24 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     new_cols["Price_vs_MA200"] = ((close - ma200) / ma200).astype("float32")
     new_cols["MA5_vs_MA20"] = ((ma5 - ma20) / ma20).astype("float32")
     new_cols["MA20_vs_MA50"] = ((ma20 - ma50) / ma50).astype("float32")
+
+    plus_di, minus_di, adx = calculate_directional_indicators(df)
+    new_cols["Plus_DI"] = plus_di
+    new_cols["Minus_DI"] = minus_di
+    new_cols["ADX14"] = adx
+
+    ma_alignment_spread = ((ma5 - ma20).abs() + (ma20 - ma50).abs()) / ma50.replace(0, np.nan)
+    new_cols["MA_Alignment_Spread"] = ma_alignment_spread.fillna(0).astype("float32")
+    new_cols["MA_Alignment_Ratio"] = (
+        ((ma5 - ma20) / ma20).fillna(0) + ((ma20 - ma50) / ma50).fillna(0)
+    ).astype("float32")
+
+    bull_prob, bear_prob, sideways_prob = calculate_regime_probabilities(
+        ma5, ma20, ma50, plus_di, minus_di, adx
+    )
+    new_cols["Regime_Prob_Bull"] = bull_prob
+    new_cols["Regime_Prob_Bear"] = bear_prob
+    new_cols["Regime_Prob_Sideways"] = sideways_prob
 
     high20 = df["High"].rolling(20, min_periods=1).max().astype("float32")
     low20 = df["Low"].rolling(20, min_periods=1).min().astype("float32")
