@@ -276,3 +276,20 @@ def get_support_resistance(df: pd.DataFrame, window: int = 20) -> dict[str, Any]
         "pivot_r1": 2 * pivot - float(prev["Low"]),
         "pivot_s1": 2 * pivot - float(prev["High"]),
     }
+
+def label_training_target(df: pd.DataFrame, lookahead: int = 1) -> pd.DataFrame:
+    """
+    학습용 Target 컬럼 생성 — 다음 날 종가가 오늘보다 높으면 1, 아니면 0.
+
+    Args:
+        df: OHLCV + 기술적 지표가 포함된 DataFrame
+        lookahead: 몇 거래일 후 종가와 비교할지 (기본 1일)
+
+    Returns:
+        'Target' 컬럼이 추가된 DataFrame (마지막 lookahead 행은 NaN)
+    """
+    df = df.copy()
+    df["Target"] = (df["Close"].shift(-lookahead) > df["Close"]).astype("int8")
+    # 미래 데이터가 없는 마지막 행(들)은 NaN으로 표시
+    df.loc[df.index[-lookahead:], "Target"] = pd.NA
+    return df

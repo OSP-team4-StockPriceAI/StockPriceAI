@@ -14,7 +14,7 @@ class PredictRequest(BaseModel):
     ticker: str = Field(..., description="종목 코드 (예: AAPL, 005930.KS)")
     period_days: int = Field(default=400, ge=100, le=3000, description="학습 기간(일)")
     include_sentiment: bool = Field(default=False, description="감성 분석 포함 여부")
-    force_lstm: bool = Field(default=False, description="LSTM 강제 사용")
+    force_lstm: bool = Field(default=True, description="LSTM 강제 사용")
 
 
 class PredictResponse(BaseModel):
@@ -44,6 +44,7 @@ async def predict(req: PredictRequest) -> PredictResponse:
         from ....pipelines.fetcher import fetch_stock_data
         from ....pipelines.technical import (
             add_all_indicators,
+            label_training_target,
             get_current_signals,
             get_support_resistance,
         )
@@ -55,6 +56,7 @@ async def predict(req: PredictRequest) -> PredictResponse:
             raise HTTPException(status_code=404, detail=f"데이터 없음: {ticker}")
 
         df = add_all_indicators(df)
+        df = label_training_target(df)  # Target 컬럼 생성 (학습에 필요)
 
         if req.include_sentiment:
             _, sent_summary = analyze_news_sentiment(
