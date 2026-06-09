@@ -11,17 +11,20 @@ os.environ["REDIS_URL"] = "redis://localhost:6379/1"
 
 import torch
 
-torch.set_num_threads(1)
+torch.set_num_threads(1)  # noqa: E402
 
 import numpy as np
 import pandas as pd
-from ml.app.models.new_predictor import LSTMFirstStackingPredictor
-from ml.app.models.predictor import EnsemblePredictor
-from ml.app.pipelines.fetcher import fetch_stock_data
-from ml.app.pipelines.get_recent_SP500_tickers import get_sp500_tickers
-from ml.app.pipelines.technical import add_all_indicators
+from ml.app.models.new_predictor import LSTMFirstStackingPredictor  # noqa: E402
+
+# noqa: E402
+from ml.app.models.predictor import EnsemblePredictor  # noqa: E402
+from ml.app.pipelines.fetcher import fetch_stock_data  # noqa: E402
+from ml.app.pipelines.get_recent_SP500_tickers import get_sp500_tickers  # noqa: E402
+from ml.app.pipelines.technical import add_all_indicators  # noqa: E402
 
 
+  # noqa: E402
 def tabulate(data, headers=None, exclude=None):
     if exclude is None:
         exclude = []
@@ -43,7 +46,8 @@ def tabulate(data, headers=None, exclude=None):
             widths[i] = max(widths[i], len(val))
 
     border = "+" + "+".join(["-" * (w + 2) for w in widths]) + "+"
-    header_line = "|" + "|".join([f" {col_names[i].ljust(widths[i])} " for i in range(len(col_names))]) + "|"
+    cols_fmt = [f" {col_names[i].ljust(widths[i])} " for i in range(len(col_names))]
+    header_line = "|" + "|".join(cols_fmt) + "|"
     
     result_lines = [border, header_line, border]
     for row in rows:
@@ -54,7 +58,9 @@ def tabulate(data, headers=None, exclude=None):
     return "\n".join(result_lines)
 
 
-def analyze_single_ticker_as_of(ticker: str, df_as_of: pd.DataFrame, info: dict, model_cls) -> dict | None:
+def analyze_single_ticker_as_of(
+    ticker: str, df_as_of: pd.DataFrame, info: dict, model_cls
+) -> dict | None:
     try:
         if df_as_of is None or len(df_as_of) < 60:
             return None
@@ -128,14 +134,18 @@ TICKERS = get_sp500_tickers()
 
 commission_rate = COMMISSION_RATE
 
-print(f"[설정] 백테스트 시작일: {BACKTEST_START_DATE if BACKTEST_START_DATE else '1년 전 자동계산'}")
+start_label = BACKTEST_START_DATE if BACKTEST_START_DATE else '1년 전 자동계산'
+print(f"[설정] 백테스트 시작일: {start_label}")
 print(f"[설정] 포트폴리오 유지 종목 수 (N): {TOP_N_STOCKS}개")
 print(f"[설정] 매매 의사결정 주기: {DECISION_INTERVAL_DAYS}거래일")
 print(f"[설정] 스캐너 갱신 주기: {SCAN_REFRESH_INTERVAL_DAYS}거래일\n")
 
 import concurrent.futures
 
-print(f"1. {len(TICKERS)}개 실제 스캐너 후보 종목의 전체 역사적 데이터(550일)를 병렬 로드하는 중 (스레드 16개)...")
+print(
+    f"1. {len(TICKERS)}개 실제 스캐너 후보 종목의 전체 역사적 데이터(550일)를"
+    " 병렬 로드하는 중 (스레드 16개)..."
+)  # noqa: E402
 stock_data_dict = {}
 
 def load_ticker_data(ticker):
@@ -157,7 +167,10 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         res = future.result()
         loaded_count += 1
         if loaded_count % 10 == 0 or loaded_count == len(TICKERS):
-            print(f"   [진행률] {loaded_count}/{len(TICKERS)} 종목 로드 시도 완료...", flush=True)
+            print(
+                f"   [진행률] {loaded_count}/{len(TICKERS)} 종목 로드 시도 완료...",
+                flush=True,
+            )
         if res is not None:
             ticker, df, info = res
             stock_data_dict[ticker] = (df, info)
@@ -218,10 +231,19 @@ def run_backtest_simulation(
         current_date = sample_df.index[i].strftime('%Y-%m-%d')
         
         # ── [A] 스캐너 갱신 시점 확인 및 포트폴리오 재조정 ──
-        is_scan_day = (i == start_idx) or (SCAN_REFRESH_INTERVAL_DAYS > 0 and (i - start_idx) % SCAN_REFRESH_INTERVAL_DAYS == 0)
+        is_scan_day = (
+            (i == start_idx)
+            or (
+                SCAN_REFRESH_INTERVAL_DAYS > 0
+                and (i - start_idx) % SCAN_REFRESH_INTERVAL_DAYS == 0
+            )
+        )
         
         if is_scan_day:
-            print(f"\n   🔄 [{model_name} 스캐너 갱신일: {current_date}] 상위 {TOP_N_STOCKS}개 종목 스캔 중...")
+            print(
+                f"\n   🔄 [{model_name} 스캐너 갱신일: {current_date}]"
+                f" 상위 {TOP_N_STOCKS}개 종목 스캔 중..."
+            )
             scan_results = []
             for ticker, (df, info) in stock_data_dict.items():
                 df_as_of = df.loc[:current_date].iloc[:-1]
@@ -231,7 +253,10 @@ def run_backtest_simulation(
             
             if len(scan_results) > 0:
                 df_scan = pd.DataFrame(scan_results)
-                df_scan = df_scan.sort_values("composite_score", ascending=False).reset_index(drop=True)
+                df_scan = (
+                    df_scan.sort_values("composite_score", ascending=False)
+                    .reset_index(drop=True)
+                )
                 new_top_n = df_scan.head(TOP_N_STOCKS)["ticker"].tolist()
             else:
                 new_top_n = []
@@ -245,7 +270,11 @@ def run_backtest_simulation(
                     close_p = _get_close_price(ticker_df, current_date)
                     shares = positions[ticker]["shares"]
                     sell_val = shares * close_p * (1 - commission_rate)
-                    buy_val = shares * positions[ticker].get("avg_price", close_p) * (1 + commission_rate)
+                    buy_val = (
+                        shares
+                        * positions[ticker].get("avg_price", close_p)
+                        * (1 + commission_rate)
+                    )
                     cash += sell_val
 
                     gain = sell_val - buy_val
@@ -256,8 +285,14 @@ def run_backtest_simulation(
                         sell_loss += 1
                         result_mark = f"❌ 손실 -${abs(gain):,.2f}"
 
-                    print(f"      [포트폴리오 제외 매도] {ticker}: {shares}주 매도 (${close_p:,.2f}) -> {result_mark}")
-                    positions[ticker] = {"shares": 0, "position": "NONE", "predictor": None, "last_trained_idx": 0, "avg_price": 0.0}
+                    print(
+                        f"      [포트폴리오 제외 매도] {ticker}: {shares}주 매도"
+                        f" (${close_p:,.2f}) -> {result_mark}"
+                    )
+                    positions[ticker] = {
+                        "shares": 0, "position": "NONE", "predictor": None,
+                        "last_trained_idx": 0, "avg_price": 0.0,
+                    }
                     
             current_top_n = new_top_n
             print(f"      👉 추천 종목군: {', '.join(current_top_n)}")
@@ -328,12 +363,19 @@ def run_backtest_simulation(
                         positions[ticker]["shares"] = shares
                         positions[ticker]["position"] = "LONG"
                         positions[ticker]["avg_price"] = close_p
-                        print(f"      [매수 체결] {ticker}: {shares}주 매수 (${close_p:,.2f})")
+                        print(
+                            f"      [매수 체결] {ticker}: {shares}주 매수"
+                            f" (${close_p:,.2f})"
+                        )
                         
                 elif sig == "SELL" and positions[ticker]["position"] == "LONG":
                     shares = positions[ticker]["shares"]
                     sell_val = shares * close_p * (1 - commission_rate)
-                    buy_val = shares * positions[ticker].get("avg_price", close_p) * (1 + commission_rate)
+                    buy_val = (
+                        shares
+                        * positions[ticker].get("avg_price", close_p)
+                        * (1 + commission_rate)
+                    )
                     cash += sell_val
 
                     gain = sell_val - buy_val
@@ -344,7 +386,10 @@ def run_backtest_simulation(
                         sell_loss += 1
                         result_mark = f"❌ 손실 -${abs(gain):,.2f}"
 
-                    print(f"      [매도 체결] {ticker}: {shares}주 매도 (${close_p:,.2f}) -> {result_mark}")
+                    print(
+                        f"      [매도 체결] {ticker}: {shares}주 매도"
+                        f" (${close_p:,.2f}) -> {result_mark}"
+                    )
                     positions[ticker]["shares"] = 0
                     positions[ticker]["position"] = "NONE"
                     positions[ticker]["avg_price"] = 0.0
@@ -374,7 +419,11 @@ def run_backtest_simulation(
             close_p = float(stock_data_dict[ticker][0]["Close"].iloc[-1])
             shares = positions[ticker]["shares"]
             sell_val = shares * close_p * (1 - commission_rate)
-            buy_val = shares * positions[ticker].get("avg_price", close_p) * (1 + commission_rate)
+            buy_val = (
+                        shares
+                        * positions[ticker].get("avg_price", close_p)
+                        * (1 + commission_rate)
+                    )
             final_cash += sell_val
 
             gain = sell_val - buy_val
@@ -385,7 +434,10 @@ def run_backtest_simulation(
                 sell_loss += 1
                 result_mark = f"❌ 손실 -${abs(gain):,.2f}"
 
-            print(f"      [종료 청산] {ticker}: {shares}주 청산 (${close_p:,.2f}) -> {result_mark}")
+            print(
+            f"      [종료 청산] {ticker}: {shares}주 청산"
+            f" (${close_p:,.2f}) -> {result_mark}"
+        )
             positions[ticker]["position"] = "NONE"
             positions[ticker]["shares"] = 0
 

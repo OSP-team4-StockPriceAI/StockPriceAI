@@ -19,19 +19,16 @@ from sklearn.metrics import accuracy_score
 from sklearn.model_selection import TimeSeriesSplit
 
 from ..core.config import (
-    DATA,
-    PYTORCH,
-    PYTORCH_SCANNER,
     XGBOOST,
     XGBOOST_SCANNER,
 )
 from .predictor import (
-    XGBoostPredictor,
     LSTMPredictor,
-    prepare_training_data,
-    get_feature_columns,
-    _build_result,
+    XGBoostPredictor,
     _auto_params,
+    _build_result,
+    get_feature_columns,
+    prepare_training_data,
 )
 
 warnings.filterwarnings("ignore")
@@ -315,7 +312,10 @@ class NewXGBoostPredictor(XGBoostPredictor):
 
 
     def predict_proba(self, df: pd.DataFrame) -> float | None:
-        """스케일링 없이 float32로 직접 예측 (부모 클래스의 scaler 의존성 제거)"""
+        """스케일링 없이 float32로 직접 예측.
+
+        부모 클래스의 scaler 의존성 제거.
+        """
         if not self.is_trained or self.feature_cols is None:
             return None
         try:
@@ -330,7 +330,9 @@ class NewXGBoostPredictor(XGBoostPredictor):
 
 
 class LSTMFirstStackingPredictor:
-    """LSTM 모델을 먼저 학습하여 분석한 후, 그 상승 확률 예측 결과를 피처로 사용하여 XGBoost를 학습시키는 스태킹 예측기"""
+    """LSTM 모델을 먼저 학습하여 분석한 후, 그 상승 확률 예측 결과를 피처로 사용하여
+    XGBoost를 학습시키는 스태킹 예측기.
+    """
 
     def __init__(self, sequence_length: int = 20, scanner_mode: bool = False):
         self.sequence_length = sequence_length
@@ -346,7 +348,10 @@ class LSTMFirstStackingPredictor:
 
         fw = self.lstm.available_framework()
         if fw is None:
-            log.warning("PyTorch/TensorFlow 미설치로 인해 LSTM 학습을 생략하고 XGBoost 단독으로 학습합니다.")
+            log.warning(
+                "PyTorch/TensorFlow 미설치로 인해 LSTM 학습을 생략하고 "
+                "XGBoost 단독으로 학습합니다."
+            )
             xgb_metrics = self.xgb.train(df, include_sentiment=include_sentiment)
             if "error" in xgb_metrics:
                 return xgb_metrics

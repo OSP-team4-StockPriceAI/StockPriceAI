@@ -489,21 +489,27 @@ class TestProcessOne:
         old = _entry("AAPL", hours_old=1.0)
         with patch("app.pipelines.scanner.is_cache_valid", return_value=True), \
              patch("app.pipelines.scanner.price_changed", return_value=False):
-            ticker, result, status = _process_one("AAPL", old, force_refresh=False, price_threshold_pct=2.0)
+            ticker, result, status = _process_one(
+                "AAPL", old, force_refresh=False, price_threshold_pct=2.0
+            )
         assert status == "cached"
         assert result is old
 
     def test_returns_failed_when_analyze_returns_none(self):
         from app.pipelines.scanner import _process_one
         with patch("app.pipelines.scanner.analyze_single_ticker", return_value=None):
-            _, result, status = _process_one("AAPL", None, force_refresh=True, price_threshold_pct=2.0)
+            _, result, status = _process_one(
+                "AAPL", None, force_refresh=True, price_threshold_pct=2.0
+            )
         assert status == "failed"
 
     def test_returns_refreshed_when_cache_miss(self):
         from app.pipelines.scanner import _process_one
         new_data = _entry("AAPL")
         with patch("app.pipelines.scanner.analyze_single_ticker", return_value=new_data):
-            _, result, status = _process_one("AAPL", None, force_refresh=False, price_threshold_pct=2.0)
+            _, result, status = _process_one(
+                "AAPL", None, force_refresh=False, price_threshold_pct=2.0
+            )
         assert status == "refreshed"
         assert result is new_data  # no blend when old is None
 
@@ -513,9 +519,11 @@ class TestProcessOne:
         new = _entry("AAPL", composite_score=4.0)
         with patch("app.pipelines.scanner.is_cache_valid", return_value=False), \
              patch("app.pipelines.scanner.analyze_single_ticker", return_value=new), \
-             patch("app.pipelines.scanner.dp_blend", return_value={**new, "blended": True}) as mock_blend:
-            _, result, status = _process_one("AAPL", old, force_refresh=False, price_threshold_pct=2.0)
-        mock_blend.assert_called_once_with(old, new)
+             patch("app.pipelines.scanner.dp_blend",
+                   return_value={**new, "blended": True}) as mock_blend:
+            _, result, status = _process_one(
+                "AAPL", old, force_refresh=False, price_threshold_pct=2.0
+            )
         assert result.get("blended") is True
 
     def test_force_refresh_bypasses_cache_validity(self):
@@ -669,7 +677,8 @@ class TestAnalyzeSingleTicker:
         df = self._make_full_df(100)
         mock_pred = self._make_mock_pred()
         signals = {"RSI": ("BUY", 50.0, "desc"), "MA": ("SELL", 60.0, "desc")}
-        with patch("app.pipelines.fetcher.fetch_stock_data", return_value=(df, {"shortName": "Apple"})), \
+        with patch("app.pipelines.fetcher.fetch_stock_data",
+                   return_value=(df, {"shortName": "Apple"})), \
              patch("app.pipelines.technical.add_all_indicators", return_value=df), \
              patch("app.models.predictor.EnsemblePredictor", return_value=mock_pred), \
              patch("app.pipelines.technical.get_current_signals", return_value=signals):

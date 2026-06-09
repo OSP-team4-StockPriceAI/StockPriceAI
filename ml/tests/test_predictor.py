@@ -117,12 +117,19 @@ def test_regime_detector_returns_regime_and_use_lstm_flags():
     assert simple_scores["regime"] in {"simple", "moderate", "complex"}
     assert isinstance(simple_scores["use_lstm"], bool)
     assert 0.0 <= simple_scores["complexity"] <= 1.0
-    assert set(simple_scores["scores"]) >= {"volatility", "trend_inconsistency", "rsi_extremes", "macd_cross_freq", "momentum_reversal", "bb_breakout"}
+    expected_keys = {
+        "volatility", "trend_inconsistency", "rsi_extremes",
+        "macd_cross_freq", "momentum_reversal", "bb_breakout",
+    }
+    assert set(simple_scores["scores"]) >= expected_keys
 
     volatile_df = make_volatile_history(80)
     volatile_scores = detector.compute(volatile_df)
     assert volatile_scores["complexity"] >= simple_scores["complexity"]
-    assert volatile_scores["use_lstm"] is True or volatile_scores["regime"] in {"moderate", "complex"}
+    assert (
+        volatile_scores["use_lstm"] is True
+        or volatile_scores["regime"] in {"moderate", "complex"}
+    )
 
 
 def test_build_result_produces_expected_signal_mapping():
@@ -167,4 +174,5 @@ def test_run_backtest_returns_portfolio_for_dummy_predictor():
     assert "final_capital" in backtest
     assert "portfolio_values" in backtest
     assert backtest["n_trades"] >= 0
-    assert backtest["strategy_return_pct"] == round((backtest["final_capital"] / 10000 - 1) * 100, 2)
+    expected_return = round((backtest["final_capital"] / 10000 - 1) * 100, 2)
+    assert backtest["strategy_return_pct"] == expected_return
