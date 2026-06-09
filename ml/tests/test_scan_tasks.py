@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
+
 # ── _save_progress ────────────────────────────────────────────
 
 @patch("app.workers.scan_tasks._get_redis")
@@ -200,3 +201,52 @@ def test_run_scan_job_progress_callback_is_invoked(mock_scan, mock_save) -> None
     assert result["status"] == "completed"
     running_calls = [c for c in mock_save.call_args_list if c[0][1].get("status") == "running"]
     assert len(running_calls) >= 2  # 초기 + callback 호출
+
+
+# ─────────────────────────────────────────────────────────────
+# 추가 단위 테스트 (redis mock)
+# ─────────────────────────────────────────────────────────────
+
+class TestScanTasks:
+    def test_get_scan_progress_returns_none_on_redis_failure(self):
+        from app.workers.scan_tasks import get_scan_progress
+        with patch("app.workers.scan_tasks._get_redis", side_effect=Exception("no redis")):
+            result = get_scan_progress("test-job-id")
+        assert result is None
+
+    def test_get_scan_progress_returns_none_when_missing(self):
+        from app.workers.scan_tasks import get_scan_progress
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None
+        with patch("app.workers.scan_tasks._get_redis", return_value=mock_redis):
+            result = get_scan_progress("nonexistent-job")
+        assert result is None
+
+    def test_get_scan_progress_returns_data_when_exists(self):
+        from app.workers.scan_tasks import get_scan_progress
+        data = {"job_id": "abc", "status": "running", "pct": 50.0}
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = json.dumps(data)
+        with patch("app.workers.scan_tasks._get_redis", return_value=mock_redis):
+            result = get_scan_progress("abc")
+        assert result is not None
+        assert result["status"] == "running"
+
+    def test_save_progress_silently_fails_on_redis_error(self):
+        from app.workers.scan_tasks import _save_progress
+        with patch("app.workers.scan_tasks._get_redis", side_effect=Exception("no redis")):
+            # 예외 없이 조용히 실패해야 함
+            _save_progress("test-job", {"status": "running"})
+
+    def test_save_progress_stores_data(self):
+        from app.workers.scan_tasks import _save_progress
+        mock_redis = MagicMock()
+        with patch("app.workers.scan_tasks._get_redis", return_value=mock_redis):
+            _save_progress("job123", {"status": "done"})
+        mock_redis.setex.assert_called_once()
+
+    def test_get_redis_creates_connection(self):
+        from app.workers.scan_tasks import _get_redis
+        with patch("redis.from_url", return_value=MagicMock()) as mock_redis:
+            _get_redis()
+        mock_redis.assert_called_once()

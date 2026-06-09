@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+
 # ─────────────────────────────────────────────────────────────
 # 픽스처 / 헬퍼
 # ─────────────────────────────────────────────────────────────
@@ -281,8 +282,7 @@ class TestFetchStockData:
         from app.pipelines.fetcher import fetch_stock_data
 
         mock_ticker = _make_mock_ticker(hist=_make_price_df(60))
-        _raise = lambda self: (_ for _ in ()).throw(Exception("info error"))
-        type(mock_ticker).info = property(_raise)
+        type(mock_ticker).info = property(lambda self: (_ for _ in ()).throw(Exception("info error")))
 
         with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
             df, info = fetch_stock_data("AAPL")
@@ -312,10 +312,7 @@ class TestFetchStockData:
         cached_json = json.dumps({
             "info": {"shortName": "Apple", "trailingPE": 28.5},
             "history": [
-                {
-                    "Date": "2024-01-01T00:00:00",
-                    "Open": 100, "High": 105, "Low": 99, "Close": 104, "Volume": 1000,
-                }
+                {"Date": "2024-01-01T00:00:00", "Open": 100, "High": 105, "Low": 99, "Close": 104, "Volume": 1000}
             ]
         })
         mock_redis.return_value.get.return_value = cached_json
@@ -504,9 +501,7 @@ class TestFetchInstitutionalHolders:
 # ─────────────────────────────────────────────────────────────
 
 class TestGetMarketContext:
-    def _make_bench_ticker(
-        self, start: float = 100.0, end: float = 110.0, n: int = 60
-    ) -> MagicMock:
+    def _make_bench_ticker(self, start: float = 100.0, end: float = 110.0, n: int = 60) -> MagicMock:
         hist = pd.DataFrame(
             {"Close": np.linspace(start, end, n)},
             index=pd.date_range("2024-01-01", periods=n, freq="B"),
@@ -518,8 +513,7 @@ class TestGetMarketContext:
     def test_us_ticker_uses_sp500_benchmark(self):
         from app.pipelines.fetcher import get_market_context
 
-        with patch("app.pipelines.fetcher.yf.Ticker",
-                   return_value=self._make_bench_ticker()) as mock_yf:
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=self._make_bench_ticker()) as mock_yf:
             get_market_context("AAPL")
 
         mock_yf.assert_called_once_with("^GSPC")
@@ -527,8 +521,7 @@ class TestGetMarketContext:
     def test_ks_ticker_uses_kospi_benchmark(self):
         from app.pipelines.fetcher import get_market_context
 
-        with patch("app.pipelines.fetcher.yf.Ticker",
-                   return_value=self._make_bench_ticker()) as mock_yf:
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=self._make_bench_ticker()) as mock_yf:
             get_market_context("005930.KS")
 
         mock_yf.assert_called_once_with("^KS11")
@@ -536,8 +529,7 @@ class TestGetMarketContext:
     def test_kq_ticker_uses_kospi_benchmark(self):
         from app.pipelines.fetcher import get_market_context
 
-        with patch("app.pipelines.fetcher.yf.Ticker",
-                   return_value=self._make_bench_ticker()) as mock_yf:
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=self._make_bench_ticker()) as mock_yf:
             get_market_context("035720.KQ")
 
         mock_yf.assert_called_once_with("^KS11")
@@ -545,8 +537,7 @@ class TestGetMarketContext:
     def test_returns_benchmark_name_and_return(self):
         from app.pipelines.fetcher import get_market_context
 
-        with patch("app.pipelines.fetcher.yf.Ticker",
-                   return_value=self._make_bench_ticker(100, 110)):
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=self._make_bench_ticker(100, 110)):
             context = get_market_context("AAPL")
 
         assert context["benchmark_name"] == "S&P 500"
@@ -556,8 +547,7 @@ class TestGetMarketContext:
         from app.pipelines.fetcher import get_market_context
 
         # 100 → 110: 수익률 10%
-        with patch("app.pipelines.fetcher.yf.Ticker",
-                   return_value=self._make_bench_ticker(100, 110)):
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=self._make_bench_ticker(100, 110)):
             context = get_market_context("AAPL")
 
         assert abs(context["benchmark_3mo_return"] - 10.0) < 0.1
@@ -583,9 +573,81 @@ class TestGetMarketContext:
     def test_return_value_is_rounded_to_two_decimals(self):
         from app.pipelines.fetcher import get_market_context
 
-        with patch("app.pipelines.fetcher.yf.Ticker",
-                   return_value=self._make_bench_ticker(100, 107.777)):
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=self._make_bench_ticker(100, 107.777)):
             context = get_market_context("AAPL")
 
         ret = context.get("benchmark_3mo_return", 0)
         assert ret == round(ret, 2)
+
+# ─────────────────────────────────────────────────────────────
+# get_recent_SP500_tickers.py 테스트
+# ─────────────────────────────────────────────────────────────
+
+from unittest.mock import MagicMock, patch
+
+class TestSP500Tickers:
+    def test_normalize_ticker(self):
+        from app.pipelines.get_recent_SP500_tickers import _normalize_ticker
+        assert _normalize_ticker("BRK.B") == "BRK-B"
+        assert _normalize_ticker("AAPL") == "AAPL"
+
+    def test_fetch_from_wikipedia_network_failure(self):
+        """네트워크 실패 시 빈 리스트 반환."""
+        from app.pipelines.get_recent_SP500_tickers import _fetch_from_wikipedia
+        with patch("urllib.request.urlopen", side_effect=Exception("Network error")):
+            result = _fetch_from_wikipedia()
+        assert result == []
+
+    def test_get_sp500_tickers_uses_fallback_when_fetch_fails(self):
+        from app.pipelines.get_recent_SP500_tickers import get_sp500_tickers, _FALLBACK_TICKERS
+        get_sp500_tickers.cache_clear()
+        with patch("app.pipelines.get_recent_SP500_tickers._fetch_from_wikipedia", return_value=[]):
+            result = get_sp500_tickers()
+        assert len(result) > 0
+        assert "AAPL" in result
+        get_sp500_tickers.cache_clear()
+
+    def test_get_sp500_tickers_deduplicates(self):
+        from app.pipelines.get_recent_SP500_tickers import get_sp500_tickers
+        get_sp500_tickers.cache_clear()
+        with patch("app.pipelines.get_recent_SP500_tickers._fetch_from_wikipedia",
+                   return_value=["AAPL", "MSFT", "AAPL"]):
+            result = get_sp500_tickers()
+        assert result.count("AAPL") == 1
+        get_sp500_tickers.cache_clear()
+
+    def test_refresh_sp500_tickers(self):
+        from app.pipelines.get_recent_SP500_tickers import refresh_sp500_tickers
+        with patch("app.pipelines.get_recent_SP500_tickers._fetch_from_wikipedia",
+                   return_value=["TEST1", "TEST2"]):
+            result = refresh_sp500_tickers()
+        assert "TEST1" in result
+
+    def test_fetch_from_wikipedia_no_symbol_column(self):
+        """파싱했지만 Symbol 컬럼이 없을 때 빈 리스트."""
+        from app.pipelines.get_recent_SP500_tickers import _fetch_from_wikipedia
+        mock_df = pd.DataFrame({"Company": ["Apple"], "HQ": ["Cupertino"]})
+        with patch("urllib.request.urlopen") as mock_open, \
+             patch("pandas.read_html", return_value=[mock_df]):
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = b"<html></html>"
+            mock_resp.__enter__ = lambda s: s
+            mock_resp.__exit__ = MagicMock(return_value=False)
+            mock_open.return_value = mock_resp
+            result = _fetch_from_wikipedia()
+        assert result == []
+
+    def test_fetch_from_wikipedia_success(self):
+        """파싱 성공 시 티커 리스트 반환."""
+        from app.pipelines.get_recent_SP500_tickers import _fetch_from_wikipedia
+        mock_df = pd.DataFrame({"Symbol": ["AAPL", "MSFT", "BRK.B"]})
+        with patch("urllib.request.urlopen") as mock_open, \
+             patch("pandas.read_html", return_value=[mock_df]):
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = b"<html></html>"
+            mock_resp.__enter__ = lambda s: s
+            mock_resp.__exit__ = MagicMock(return_value=False)
+            mock_open.return_value = mock_resp
+            result = _fetch_from_wikipedia()
+        assert "AAPL" in result
+        assert "BRK-B" in result  # 정규화됨
