@@ -31,6 +31,14 @@ export interface StockInfo {
   market_cap?: number;
   current_price?: number;
   currency?: string;
+  history?: {
+    Date: string;
+    Open: number;
+    High: number;
+    Low: number;
+    Close: number;
+    Volume: number;
+  }[];
 }
 
 // ── Watchlist ─────────────────────────────────────────────────────────────────
