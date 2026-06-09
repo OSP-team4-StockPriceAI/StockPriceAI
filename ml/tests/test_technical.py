@@ -60,6 +60,8 @@ def test_add_all_indicators_columns():
     required = [
         "RSI14", "MACD", "BB_Upper", "BB_Lower", "ATR14", "STOCH_K", "OBV", "Target",
         "ADX14", "Plus_DI", "Minus_DI", "MA_Alignment_Spread",
+        "MA_Bias_Short", "MA_Bias_Mid", "Regime_Alignment", "Regime_Directional", "Regime_Trend_Strength",
+        "ADX_Momentum", "DI_Diff",
         "Regime_Prob_Bull", "Regime_Prob_Bear", "Regime_Prob_Sideways",
     ]
     for col in required:

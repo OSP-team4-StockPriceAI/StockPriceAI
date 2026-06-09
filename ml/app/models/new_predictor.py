@@ -1,8 +1,8 @@
 """
-LSTM-XGBoost Stacking 예측 모듈
+LSTM-XGBoost Stacking 예측 모듈 (Production Optimized)
 구조:
-  LSTMFirstStackingPredictor  — LSTM을 먼저 학습하고, 그 예측 확률을 피처로 추가하여 XGBoost를 학습시키는 스태킹 모델
-  NewXGBoostPredictor         — 기존 XGBoostPredictor를 상속받아 커스텀 피처 목록(LSTM_Proba 포함)을 받아 학습하도록 개선
+  LSTMFirstStackingPredictor  — LSTM OOF 확률 피처 + 트리 모델의 결합
+  NewXGBoostPredictor         — 스케일링 오버헤드를 제거한 고속 메타 모델
 """
 
 from __future__ import annotations
@@ -10,14 +10,13 @@ from __future__ import annotations
 import logging
 import time
 import warnings
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.preprocessing import StandardScaler
 
 from ..core.config import (
     DATA,
@@ -47,9 +46,9 @@ def predict_lstm_history_proba(lstm_pred: LSTMPredictor, df: pd.DataFrame) -> pd
     SEQ = lstm_pred.sequence_length
     feature_cols = lstm_pred.feature_cols
 
-    work = df[feature_cols].copy()
-    work = work.ffill().bfill().fillna(0)
-    work = work.replace([np.inf, -np.inf], 0).clip(-10, 10)
+    # 메모리 절약을 위한 float32 고정 및 고속 결측치 처리
+    work = df[feature_cols].ffill().bfill().fillna(0).replace([np.inf, -np.inf], 0).clip(-10, 10)
+    
     if len(work) < SEQ:
         return pd.Series(0.5, index=df.index)
 
@@ -60,36 +59,22 @@ def predict_lstm_history_proba(lstm_pred: LSTMPredictor, df: pd.DataFrame) -> pd
     return pd.Series(probs, index=df.index)
 
 
-def _split_time_series_train_val(
-    X: np.ndarray, y: np.ndarray, val_ratio: float = 0.2
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-
-    val_count = max(1, int(len(X) * val_ratio))
-    split = len(X) - val_count
-    return X[:split], y[:split], X[split:], y[split:]
-
-
-def _split_time_series_df(
-    df: pd.DataFrame, val_ratio: float = 0.2
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-   
-    val_count = max(1, int(len(df) * val_ratio))
-    split = len(df) - val_count
-    return df.iloc[:split], df.iloc[split:]
-
-
 def _predict_lstm_on_scaled_features(
     lstm_pred: LSTMPredictor,
-    X_sc: npt.NDArray[Any],
+    X_sc: npt.NDArray[np.float32],
     sequence_length: int,
-) -> npt.NDArray[Any]:
-  
-    probs = np.full(len(X_sc), 0.5, dtype=float)
+) -> npt.NDArray[np.float64]:
+    """파이썬 루프를 제거하고 Numpy 메모리 뷰를 활용한 초고속 시퀀스 생성 및 추론"""
+    probs = np.full(len(X_sc), 0.5, dtype=np.float64)
     
     if len(X_sc) < sequence_length:
         return probs
     
-    X_seq = np.array([X_sc[i - sequence_length:i] for i in range(sequence_length, len(X_sc))])
+    # [최적화] np.lib.stride_tricks 활용: 메모리 복사 없이 C 레벨 속도로 3D 시퀀스 뷰 생성
+    # X_sc shape: (N, F) -> sliding_window shape: (N - SEQ + 1, F, SEQ)
+    windowed = np.lib.stride_tricks.sliding_window_view(X_sc, window_shape=sequence_length, axis=0)
+    # 텐서 배열을 LSTM 입력 규격인 (Batch, Seq, Feature)로 변경
+    X_seq = np.transpose(windowed, (0, 2, 1)).copy() 
     
     if lstm_pred.framework == "pytorch":
         import torch
@@ -98,10 +83,10 @@ def _predict_lstm_on_scaled_features(
         with torch.no_grad():
             t = torch.tensor(X_seq, dtype=torch.float32, device=device)
             preds = lstm_pred.model(t).cpu().numpy().flatten()
-            probs[sequence_length:] = preds
+            probs[sequence_length - 1:] = preds
     else:
         preds = lstm_pred.model.predict(X_seq, verbose=0).flatten()
-        probs[sequence_length:] = preds
+        probs[sequence_length - 1:] = preds
     
     return probs
 
@@ -113,7 +98,7 @@ def _compute_oof_lstm_proba(
     n_splits: int = 5,
     scanner_mode: bool = False,
 ) -> pd.Series:
-    """시간 순서대로 fold를 돌며 깨끗한 OOF LSTM 확률을 생성합니다 (최적화됨)."""
+    """OOF LSTM 확률 생성기"""
     oof = pd.Series(0.5, index=df.index, dtype=float)
     if len(df) < sequence_length + 20:
         return oof
@@ -124,10 +109,7 @@ def _compute_oof_lstm_proba(
 
     feature_cols = get_feature_columns(df, include_sentiment)
     
-    # 루프 밖에서 한 번만 전체 df 준비 (스케일링, 결측치 처리)
-    work = df[feature_cols].copy()
-    work = work.ffill().bfill().fillna(0)
-    work = work.replace([np.inf, -np.inf], 0).clip(-10, 10)
+    work = df[feature_cols].ffill().bfill().fillna(0).replace([np.inf, -np.inf], 0).clip(-10, 10)
     X_full = work.values.astype(np.float32)
     
     tscv = TimeSeriesSplit(n_splits=n_splits)
@@ -139,14 +121,12 @@ def _compute_oof_lstm_proba(
         if "error" in fold_metrics:
             continue
 
-        # 준비된 X_full을 해당 폴드의 scaler로 변환하고, 필요한 부분만 추론
-        start_idx = max(0, val_idx[0] - sequence_length)
+        start_idx = max(0, val_idx[0] - sequence_length + 1)
         end_idx = val_idx[-1] + 1
         
         X_sc = fold_lstm.scaler.transform(X_full[start_idx:end_idx])
         fold_probs = _predict_lstm_on_scaled_features(fold_lstm, X_sc, sequence_length)
         
-        # val_idx에 해당하는 인덱스만 OOF에 저장
         val_start_offset = val_idx[0] - start_idx
         val_end_offset = val_start_offset + len(val_idx)
         val_index = df.iloc[val_idx].index
@@ -156,7 +136,7 @@ def _compute_oof_lstm_proba(
 
 
 class NewXGBoostPredictor(XGBoostPredictor):
-    """지정된 커스텀 피처 리스트(예: LSTM_Proba 포함)로 학습할 수 있도록 확장한 XGBoost 예측기"""
+    """트리 모델의 특성을 반영하여 불필요한 Scaling 오버헤드를 제거한 고성능 예측기"""
 
     def train(
         self,
@@ -168,17 +148,11 @@ class NewXGBoostPredictor(XGBoostPredictor):
     ) -> dict[str, Any]:
         try:
             import xgboost as xgb
-
-            _ = xgb.XGBClassifier
         except Exception:
             return self._train_sklearn(df, include_sentiment, feature_cols=feature_cols)
 
         xgb_cfg = XGBOOST_SCANNER if self.scanner_mode else XGBOOST
-        
-        if feature_cols is not None:
-            self.feature_cols = feature_cols
-        else:
-            self.feature_cols = get_feature_columns(df, include_sentiment)
+        self.feature_cols = feature_cols if feature_cols is not None else get_feature_columns(df, include_sentiment)
 
         raw_len = len(df)
         ap = _auto_params(raw_len)
@@ -191,77 +165,46 @@ class NewXGBoostPredictor(XGBoostPredictor):
         if X is None or y is None:
             return {"error": "학습 데이터 부족 (최소 60일 필요)"}
 
-        log.info(
-            f"New XGBoost 학습: 데이터={raw_len}일, 피처={len(self.feature_cols)}개, CV={n_splits_}fold"
-        )
+        # XGBoost는 float32를 네이티브로 처리합니다. 스케일링 제거.
+        X = X.astype(np.float32)
+
+        log.info(f"New XGBoost 학습: 데이터={raw_len}일, 피처={len(self.feature_cols)}개, CV={n_splits_}fold")
 
         t0 = time.time()
         tscv = TimeSeriesSplit(n_splits=n_splits_)
         cv_scores = []
         oof_proba = np.full(len(y), 0.5)
 
-        for fold_i, (tr_idx, val_idx) in enumerate(tscv.split(X), 1):
-            sc = StandardScaler()
-            Xtr = sc.fit_transform(X[tr_idx])
-            Xvl = sc.transform(X[val_idx])
+        for tr_idx, val_idx in tscv.split(X):
+            Xtr, Xvl = X[tr_idx], X[val_idx]
+            ytr, yvl = y[tr_idx], y[val_idx]
 
             m = xgb.XGBClassifier(
-                n_estimators=n_est_cv,
-                max_depth=4,
-                learning_rate=0.05,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                min_child_weight=5,
-                gamma=1,
-                reg_alpha=0.1,
-                reg_lambda=1.0,
-                eval_metric="logloss",
-                random_state=42,
-                n_jobs=xgb_cfg["nthread"],
-                verbosity=0,
-                device=xgb_cfg["device"],
-                tree_method=xgb_cfg["tree_method"],
-                max_bin=xgb_cfg["max_bin"],
-                grow_policy=xgb_cfg["grow_policy"],
+                n_estimators=n_est_cv, max_depth=4, learning_rate=0.05,
+                subsample=0.8, colsample_bytree=0.8, min_child_weight=5, gamma=1,
+                reg_alpha=0.1, reg_lambda=1.0, eval_metric="logloss", random_state=42,
+                n_jobs=xgb_cfg["nthread"], verbosity=0, device=xgb_cfg["device"],
+                tree_method=xgb_cfg["tree_method"], max_bin=xgb_cfg["max_bin"], grow_policy=xgb_cfg["grow_policy"],
             )
-            m.fit(Xtr, y[tr_idx], eval_set=[(Xvl, y[val_idx])], verbose=False)
+            m.fit(Xtr, ytr, eval_set=[(Xvl, yvl)], verbose=False)
             oof_proba[val_idx] = m.predict_proba(Xvl)[:, 1]
-            fold_acc = accuracy_score(y[val_idx], m.predict(Xvl))
-            cv_scores.append(fold_acc)
+            cv_scores.append(accuracy_score(yvl, m.predict(Xvl)))
 
         self._cv_proba = oof_proba
         log.info(f"New XGBoost CV 평균 정확도: {float(np.mean(cv_scores)):.3f} ({time.time()-t0:.1f}s)")
 
         if not cv_only:
-            X_sc = self.scaler.fit_transform(X)
             self.model = xgb.XGBClassifier(
-                n_estimators=n_est_fin,
-                max_depth=4,
-                learning_rate=0.05,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                min_child_weight=5,
-                gamma=1,
-                reg_alpha=0.1,
-                reg_lambda=1.0,
-                eval_metric="logloss",
-                random_state=42,
-                n_jobs=xgb_cfg["nthread"],
-                verbosity=0,
-                device=xgb_cfg["device"],
-                tree_method=xgb_cfg["tree_method"],
-                max_bin=xgb_cfg["max_bin"],
-                grow_policy=xgb_cfg["grow_policy"],
+                n_estimators=n_est_fin, max_depth=4, learning_rate=0.05,
+                subsample=0.8, colsample_bytree=0.8, min_child_weight=5, gamma=1,
+                reg_alpha=0.1, reg_lambda=1.0, eval_metric="logloss", random_state=42,
+                n_jobs=xgb_cfg["nthread"], verbosity=0, device=xgb_cfg["device"],
+                tree_method=xgb_cfg["tree_method"], max_bin=xgb_cfg["max_bin"], grow_policy=xgb_cfg["grow_policy"],
             )
-            self.model.fit(X_sc, y, verbose=False)
+            self.model.fit(X, y, verbose=False)
             self.is_trained = True
-
-            self.feature_importances_ = pd.Series(
-                self.model.feature_importances_, index=self.feature_cols
-            ).sort_values(ascending=False)
-
-            y_pred = self.model.predict(X_sc)
-            train_accuracy = float(accuracy_score(y, y_pred))
+            self.feature_importances_ = pd.Series(self.model.feature_importances_, index=self.feature_cols).sort_values(ascending=False)
+            train_accuracy = float(accuracy_score(y, self.model.predict(X)))
         else:
             train_accuracy = 0.0
 
@@ -284,62 +227,36 @@ class NewXGBoostPredictor(XGBoostPredictor):
     ) -> dict[str, Any]:
         try:
             import xgboost as xgb
-
-            _ = xgb.XGBClassifier
         except Exception:
             return self._train_sklearn(df, include_sentiment, feature_cols=feature_cols)
 
         xgb_cfg = XGBOOST_SCANNER if self.scanner_mode else XGBOOST
+        self.feature_cols = feature_cols if feature_cols is not None else get_feature_columns(df, include_sentiment)
 
-        if feature_cols is not None:
-            self.feature_cols = feature_cols
-        else:
-            self.feature_cols = get_feature_columns(df, include_sentiment)
-
-        raw_len = len(df)
-        ap = _auto_params(raw_len)
-        max_samp = ap.get("max_samples")
-        n_est_fin = ap["n_estimators_xgb"] if not self.scanner_mode else 150
-
-        X, y, _ = prepare_training_data(df, self.feature_cols, max_samples=max_samp)
+        ap = _auto_params(len(df))
+        X, y, _ = prepare_training_data(df, self.feature_cols, max_samples=ap.get("max_samples"))
         if X is None or y is None:
             return {"error": "학습 데이터 부족 (최소 60일 필요)"}
 
-        self.scaler = StandardScaler()
-        X_sc = self.scaler.fit_transform(X)
+        X = X.astype(np.float32)
+
         self.model = xgb.XGBClassifier(
-            n_estimators=n_est_fin,
-            max_depth=4,
-            learning_rate=0.05,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            min_child_weight=5,
-            gamma=1,
-            reg_alpha=0.1,
-            reg_lambda=1.0,
-            eval_metric="logloss",
-            random_state=42,
-            n_jobs=xgb_cfg["nthread"],
-            verbosity=0,
-            device=xgb_cfg["device"],
-            tree_method=xgb_cfg["tree_method"],
-            max_bin=xgb_cfg["max_bin"],
-            grow_policy=xgb_cfg["grow_policy"],
+            n_estimators=ap["n_estimators_xgb"] if not self.scanner_mode else 150,
+            max_depth=4, learning_rate=0.05, subsample=0.8, colsample_bytree=0.8,
+            min_child_weight=5, gamma=1, reg_alpha=0.1, reg_lambda=1.0, eval_metric="logloss",
+            random_state=42, n_jobs=xgb_cfg["nthread"], verbosity=0, device=xgb_cfg["device"],
+            tree_method=xgb_cfg["tree_method"], max_bin=xgb_cfg["max_bin"], grow_policy=xgb_cfg["grow_policy"],
         )
-        self.model.fit(X_sc, y, verbose=False)
+        self.model.fit(X, y, verbose=False)
         self.is_trained = True
 
-        self.feature_importances_ = pd.Series(
-            self.model.feature_importances_, index=self.feature_cols
-        ).sort_values(ascending=False)
-
-        y_pred = self.model.predict(X_sc)
+        self.feature_importances_ = pd.Series(self.model.feature_importances_, index=self.feature_cols).sort_values(ascending=False)
         self.training_metrics = {
-            "train_accuracy": float(accuracy_score(y, y_pred)),
+            "train_accuracy": float(accuracy_score(y, self.model.predict(X))),
             "model_type": "NewXGBoost (full)",
             "n_features": len(self.feature_cols),
             "n_samples": len(y),
-            "n_samples_total": raw_len,
+            "n_samples_total": len(df),
         }
         return self.training_metrics
 
@@ -350,36 +267,38 @@ class NewXGBoostPredictor(XGBoostPredictor):
         feature_cols: list[str] | None = None,
     ) -> dict[str, Any]:
         from sklearn.ensemble import GradientBoostingClassifier
-
-        log.warning("XGBoost 로드 실패 → GradientBoosting 폴백")
-        if feature_cols is not None:
-            self.feature_cols = feature_cols
-        else:
-            self.feature_cols = get_feature_columns(df, include_sentiment)
-
+        log.warning("XGBoost 로드 실패 → GradientBoosting 폴백 (Scaling 미적용)")
+        
+        self.feature_cols = feature_cols if feature_cols is not None else get_feature_columns(df, include_sentiment)
         X, y, _ = prepare_training_data(df, self.feature_cols)
         if X is None or y is None:
             return {"error": "학습 데이터 부족"}
 
-        X_sc = self.scaler.fit_transform(X)
-        self.model = GradientBoostingClassifier(
-            n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, random_state=42
-        )
-        self.model.fit(X_sc, y)
+        self.model = GradientBoostingClassifier(n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, random_state=42)
+        self.model.fit(X, y)
         self.is_trained = True
+        self.feature_importances_ = pd.Series(self.model.feature_importances_, index=self.feature_cols).sort_values(ascending=False)
 
-        self.feature_importances_ = pd.Series(
-            self.model.feature_importances_, index=self.feature_cols
-        ).sort_values(ascending=False)
-
-        y_pred = self.model.predict(X_sc)
         self.training_metrics = {
-            "train_accuracy": float(accuracy_score(y, y_pred)),
+            "train_accuracy": float(accuracy_score(y, self.model.predict(X))),
             "model_type": "GradientBoosting (sklearn)",
             "n_features": len(self.feature_cols),
             "n_samples": len(y),
         }
         return self.training_metrics
+
+
+    def predict_proba(self, df: pd.DataFrame) -> float | None:
+        """스케일링 없이 float32로 직접 예측 (부모 클래스의 scaler 의존성 제거)"""
+        if not self.is_trained or self.feature_cols is None:
+            return None
+        try:
+            latest = df[self.feature_cols].iloc[-1:]
+            latest = latest.ffill().bfill().fillna(0).replace([np.inf, -np.inf], 0).clip(-10, 10)
+            X = latest.values.astype(np.float32)
+            return float(self.model.predict_proba(X)[0, 1])
+        except Exception:
+            return None
 
 
 class LSTMFirstStackingPredictor:
@@ -397,7 +316,6 @@ class LSTMFirstStackingPredictor:
     def train(self, df: pd.DataFrame, include_sentiment: bool = True) -> dict[str, Any]:
         t_total = time.time()
 
-        # Check if PyTorch or TensorFlow is available
         fw = self.lstm.available_framework()
         if fw is None:
             log.warning("PyTorch/TensorFlow 미설치로 인해 LSTM 학습을 생략하고 XGBoost 단독으로 학습합니다.")
@@ -476,7 +394,6 @@ class LSTMFirstStackingPredictor:
         if not self.is_trained:
             return {"error": "모델 미학습"}
 
-        # Check if PyTorch or TensorFlow is available
         fw = self.lstm.available_framework()
         if fw is None:
             p_xgb = self.xgb.predict_proba(df)

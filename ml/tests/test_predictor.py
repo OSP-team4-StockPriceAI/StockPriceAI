@@ -128,10 +128,10 @@ def test_regime_detector_returns_regime_and_use_lstm_flags():
 def test_build_result_produces_expected_signal_mapping():
     from app.models.predictor import _build_result
 
-    buy = _build_result(0.62, "XGBoost")
+    buy = _build_result(0.70, "XGBoost")
     assert buy["signal"] == "BUY"
     assert buy["direction"] == 1
-    assert buy["up_probability"] == 0.62
+    assert buy["up_probability"] == 0.70
 
     sell = _build_result(0.38, "XGBoost")
     assert sell["signal"] == "SELL"

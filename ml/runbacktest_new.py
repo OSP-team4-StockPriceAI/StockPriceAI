@@ -13,7 +13,7 @@ from datetime import datetime
 
 from ml.app.models.new_predictor import LSTMFirstStackingPredictor
 from ml.app.pipelines.fetcher import fetch_stock_data
-from ml.app.pipelines.technical import add_all_indicators
+from ml.app.pipelines.technical import add_all_indicators, label_training_target
 from ml.app.pipelines.get_recent_SP500_tickers import get_sp500_tickers
 
 def tabulate(data, headers=None, exclude=None):
@@ -137,6 +137,7 @@ def load_ticker_data(ticker):
         df, info = fetch_stock_data(ticker, period_days=550)
         if df is not None and len(df) >= 60:
             df = add_all_indicators(df)
+            df = label_training_target(df)  # Target 컬럼 추가
             return ticker, df, info
     except Exception:
         pass
