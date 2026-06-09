@@ -46,7 +46,11 @@ class RegimeDetector:
                 "regime": "simple", 
                 "use_lstm": False, 
                 "complexity": 0.0,
-                "scores": {"volatility": 0.0, "trend_inconsistency": 0.0, "rsi_extremes": 0.0, "macd_cross_freq": 0.0, "momentum_reversal": 0.0, "bb_breakout": 0.0}
+                "scores": {
+                    "volatility": 0.0, "trend_inconsistency": 0.0,
+                    "rsi_extremes": 0.0, "macd_cross_freq": 0.0,
+                    "momentum_reversal": 0.0, "bb_breakout": 0.0,
+                }
             }
         
         latest = df.iloc[-1]
@@ -224,7 +228,10 @@ class XGBoostPredictor:
             return self._train_sklearn(df, include_sentiment, feature_cols=feature_cols)
 
         xgb_cfg = XGBOOST_SCANNER if self.scanner_mode else XGBOOST
-        self.feature_cols = feature_cols if feature_cols is not None else get_feature_columns(df, include_sentiment)
+        self.feature_cols = (
+            feature_cols if feature_cols is not None
+            else get_feature_columns(df, include_sentiment)
+        )
 
         raw_len = len(df)
         ap = _auto_params(raw_len)
@@ -240,7 +247,10 @@ class XGBoostPredictor:
         # XGBoost는 float32를 네이티브로 처리합니다. 스케일링 불필요.
         X = X.astype(np.float32)
 
-        log.info(f"XGBoost 학습: 데이터={raw_len}일, 피처={len(self.feature_cols)}개, CV={n_splits_}fold")
+        log.info(
+            f"XGBoost 학습: 데이터={raw_len}일, "
+            f"피처={len(self.feature_cols)}개, CV={n_splits_}fold"
+        )
 
         t0 = time.time()
         tscv = TimeSeriesSplit(n_splits=n_splits_)
@@ -264,7 +274,9 @@ class XGBoostPredictor:
             cv_scores.append(accuracy_score(yvl, m.predict(Xvl)))
 
         self._cv_proba = oof_proba
-        log.info(f"XGBoost CV 평균 정확도: {float(np.mean(cv_scores)):.3f} ({time.time()-t0:.1f}s)")
+        log.info(
+            f"XGBoost CV 평균 정확도: {float(np.mean(cv_scores)):.3f} ({time.time()-t0:.1f}s)"
+        )
 
         if not cv_only:
             self.model = xgb.XGBClassifier(
@@ -311,7 +323,10 @@ class XGBoostPredictor:
             return self._train_sklearn(df, include_sentiment, feature_cols=feature_cols)
 
         xgb_cfg = XGBOOST_SCANNER if self.scanner_mode else XGBOOST
-        self.feature_cols = feature_cols if feature_cols is not None else get_feature_columns(df, include_sentiment)
+        self.feature_cols = (
+            feature_cols if feature_cols is not None
+            else get_feature_columns(df, include_sentiment)
+        )
 
         ap = _auto_params(len(df))
         X, y, _ = prepare_training_data(df, self.feature_cols, max_samples=ap.get("max_samples"))
@@ -352,7 +367,10 @@ class XGBoostPredictor:
         from sklearn.ensemble import GradientBoostingClassifier
         log.warning("XGBoost 로드 실패 → GradientBoosting 폴백")
 
-        self.feature_cols = feature_cols if feature_cols is not None else get_feature_columns(df, include_sentiment)
+        self.feature_cols = (
+            feature_cols if feature_cols is not None
+            else get_feature_columns(df, include_sentiment)
+        )
         X, y, _ = prepare_training_data(df, self.feature_cols)
         if X is None or y is None:
             return {"error": "학습 데이터 부족"}

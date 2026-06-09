@@ -19,16 +19,19 @@ from sklearn.metrics import accuracy_score
 from sklearn.model_selection import TimeSeriesSplit
 
 from ..core.config import (
+    DATA,
+    PYTORCH,
+    PYTORCH_SCANNER,
     XGBOOST,
     XGBOOST_SCANNER,
 )
 from .predictor import (
-    LSTMPredictor,
     XGBoostPredictor,
-    _auto_params,
-    _build_result,
-    get_feature_columns,
+    LSTMPredictor,
     prepare_training_data,
+    get_feature_columns,
+    _build_result,
+    _auto_params,
 )
 
 warnings.filterwarnings("ignore")
@@ -149,7 +152,10 @@ class NewXGBoostPredictor(XGBoostPredictor):
             return self._train_sklearn(df, include_sentiment, feature_cols=feature_cols)
 
         xgb_cfg = XGBOOST_SCANNER if self.scanner_mode else XGBOOST
-        self.feature_cols = feature_cols if feature_cols is not None else get_feature_columns(df, include_sentiment)
+        self.feature_cols = (
+            feature_cols if feature_cols is not None
+            else get_feature_columns(df, include_sentiment)
+        )
 
         raw_len = len(df)
         ap = _auto_params(raw_len)
@@ -165,7 +171,10 @@ class NewXGBoostPredictor(XGBoostPredictor):
         # XGBoost는 float32를 네이티브로 처리합니다. 스케일링 제거.
         X = X.astype(np.float32)
 
-        log.info(f"New XGBoost 학습: 데이터={raw_len}일, 피처={len(self.feature_cols)}개, CV={n_splits_}fold")
+        log.info(
+            f"New XGBoost 학습: 데이터={raw_len}일, "
+            f"피처={len(self.feature_cols)}개, CV={n_splits_}fold"
+        )
 
         t0 = time.time()
         tscv = TimeSeriesSplit(n_splits=n_splits_)
@@ -181,14 +190,18 @@ class NewXGBoostPredictor(XGBoostPredictor):
                 subsample=0.8, colsample_bytree=0.8, min_child_weight=5, gamma=1,
                 reg_alpha=0.1, reg_lambda=1.0, eval_metric="logloss", random_state=42,
                 n_jobs=xgb_cfg["nthread"], verbosity=0, device=xgb_cfg["device"],
-                tree_method=xgb_cfg["tree_method"], max_bin=xgb_cfg["max_bin"], grow_policy=xgb_cfg["grow_policy"],
+                tree_method=xgb_cfg["tree_method"], max_bin=xgb_cfg["max_bin"],
+                grow_policy=xgb_cfg["grow_policy"],
             )
             m.fit(Xtr, ytr, eval_set=[(Xvl, yvl)], verbose=False)
             oof_proba[val_idx] = m.predict_proba(Xvl)[:, 1]
             cv_scores.append(accuracy_score(yvl, m.predict(Xvl)))
 
         self._cv_proba = oof_proba
-        log.info(f"New XGBoost CV 평균 정확도: {float(np.mean(cv_scores)):.3f} ({time.time()-t0:.1f}s)")
+        log.info(
+            f"New XGBoost CV 평균 정확도: "
+            f"{float(np.mean(cv_scores)):.3f} ({time.time()-t0:.1f}s)"
+        )
 
         if not cv_only:
             self.model = xgb.XGBClassifier(
@@ -196,11 +209,14 @@ class NewXGBoostPredictor(XGBoostPredictor):
                 subsample=0.8, colsample_bytree=0.8, min_child_weight=5, gamma=1,
                 reg_alpha=0.1, reg_lambda=1.0, eval_metric="logloss", random_state=42,
                 n_jobs=xgb_cfg["nthread"], verbosity=0, device=xgb_cfg["device"],
-                tree_method=xgb_cfg["tree_method"], max_bin=xgb_cfg["max_bin"], grow_policy=xgb_cfg["grow_policy"],
+                tree_method=xgb_cfg["tree_method"], max_bin=xgb_cfg["max_bin"],
+                grow_policy=xgb_cfg["grow_policy"],
             )
             self.model.fit(X, y, verbose=False)
             self.is_trained = True
-            self.feature_importances_ = pd.Series(self.model.feature_importances_, index=self.feature_cols).sort_values(ascending=False)
+            self.feature_importances_ = pd.Series(
+                self.model.feature_importances_, index=self.feature_cols
+            ).sort_values(ascending=False)
             train_accuracy = float(accuracy_score(y, self.model.predict(X)))
         else:
             train_accuracy = 0.0
@@ -228,7 +244,10 @@ class NewXGBoostPredictor(XGBoostPredictor):
             return self._train_sklearn(df, include_sentiment, feature_cols=feature_cols)
 
         xgb_cfg = XGBOOST_SCANNER if self.scanner_mode else XGBOOST
-        self.feature_cols = feature_cols if feature_cols is not None else get_feature_columns(df, include_sentiment)
+        self.feature_cols = (
+            feature_cols if feature_cols is not None
+            else get_feature_columns(df, include_sentiment)
+        )
 
         ap = _auto_params(len(df))
         X, y, _ = prepare_training_data(df, self.feature_cols, max_samples=ap.get("max_samples"))
@@ -242,12 +261,15 @@ class NewXGBoostPredictor(XGBoostPredictor):
             max_depth=4, learning_rate=0.05, subsample=0.8, colsample_bytree=0.8,
             min_child_weight=5, gamma=1, reg_alpha=0.1, reg_lambda=1.0, eval_metric="logloss",
             random_state=42, n_jobs=xgb_cfg["nthread"], verbosity=0, device=xgb_cfg["device"],
-            tree_method=xgb_cfg["tree_method"], max_bin=xgb_cfg["max_bin"], grow_policy=xgb_cfg["grow_policy"],
+            tree_method=xgb_cfg["tree_method"], max_bin=xgb_cfg["max_bin"],
+            grow_policy=xgb_cfg["grow_policy"],
         )
         self.model.fit(X, y, verbose=False)
         self.is_trained = True
 
-        self.feature_importances_ = pd.Series(self.model.feature_importances_, index=self.feature_cols).sort_values(ascending=False)
+        self.feature_importances_ = pd.Series(
+            self.model.feature_importances_, index=self.feature_cols
+        ).sort_values(ascending=False)
         self.training_metrics = {
             "train_accuracy": float(accuracy_score(y, self.model.predict(X))),
             "model_type": "NewXGBoost (full)",
@@ -266,15 +288,22 @@ class NewXGBoostPredictor(XGBoostPredictor):
         from sklearn.ensemble import GradientBoostingClassifier
         log.warning("XGBoost 로드 실패 → GradientBoosting 폴백 (Scaling 미적용)")
         
-        self.feature_cols = feature_cols if feature_cols is not None else get_feature_columns(df, include_sentiment)
+        self.feature_cols = (
+            feature_cols if feature_cols is not None
+            else get_feature_columns(df, include_sentiment)
+        )
         X, y, _ = prepare_training_data(df, self.feature_cols)
         if X is None or y is None:
             return {"error": "학습 데이터 부족"}
 
-        self.model = GradientBoostingClassifier(n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, random_state=42)
+        self.model = GradientBoostingClassifier(
+            n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, random_state=42
+        )
         self.model.fit(X, y)
         self.is_trained = True
-        self.feature_importances_ = pd.Series(self.model.feature_importances_, index=self.feature_cols).sort_values(ascending=False)
+        self.feature_importances_ = pd.Series(
+            self.model.feature_importances_, index=self.feature_cols
+        ).sort_values(ascending=False)
 
         self.training_metrics = {
             "train_accuracy": float(accuracy_score(y, self.model.predict(X))),
@@ -291,7 +320,9 @@ class NewXGBoostPredictor(XGBoostPredictor):
             return None
         try:
             latest = df[self.feature_cols].iloc[-1:]
-            latest = latest.ffill().bfill().fillna(0).replace([np.inf, -np.inf], 0).clip(-10, 10)
+            latest = (
+                latest.ffill().bfill().fillna(0).replace([np.inf, -np.inf], 0).clip(-10, 10)
+            )
             X = latest.values.astype(np.float32)
             return float(self.model.predict_proba(X)[0, 1])
         except Exception:

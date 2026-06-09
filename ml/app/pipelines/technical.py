@@ -4,7 +4,6 @@ Hybrid Indicator Engineering Module (Production Ready & Test Compatible)
 
 import sys
 from typing import Any
-
 import numpy as np
 import pandas as pd
 
@@ -57,8 +56,10 @@ def calculate_directional_indicators(
 
     up_move = hi - prev_hi
     down_move = prev_lo - lo
-    plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=df.index)
-    minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=df.index)
+    plus_dm_vals = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm_vals = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+    plus_dm = pd.Series(plus_dm_vals, index=df.index)
+    minus_dm = pd.Series(minus_dm_vals, index=df.index)
 
     plus_dm_smooth = plus_dm.ewm(com=window - 1, min_periods=window).mean()
     minus_dm_smooth = minus_dm.ewm(com=window - 1, min_periods=window).mean()
@@ -66,7 +67,8 @@ def calculate_directional_indicators(
 
     plus_di = (100 * plus_dm_smooth / atr).fillna(0).astype("float32")
     minus_di = (100 * minus_dm_smooth / atr).fillna(0).astype("float32")
-    dx = (abs(plus_di - minus_di) / (plus_di + minus_di).replace(0, np.nan)).fillna(0) * 100
+    di_sum = (plus_di + minus_di).replace(0, np.nan)
+    dx = (abs(plus_di - minus_di) / di_sum).fillna(0) * 100
     adx = dx.ewm(com=window - 1, min_periods=window).mean().fillna(0).astype("float32")
 
     return plus_di, minus_di, adx
@@ -80,11 +82,18 @@ def calculate_regime_probabilities(
     ma_bias_mid = ((ma20 - ma50) / ma50).replace([np.inf, -np.inf], 0).fillna(0)
     alignment = ((ma_bias_short + ma_bias_mid) / 2).clip(-3, 3)
 
-    directional = ((plus_di - minus_di) / (plus_di + minus_di).replace(0, np.nan)).fillna(0).clip(-1, 1)
+    di_sum_regime = (plus_di + minus_di).replace(0, np.nan)
+    directional = ((plus_di - minus_di) / di_sum_regime).fillna(0).clip(-1, 1)
     trend_strength = (adx / 100).clip(0, 1)
 
-    bull = np.clip(0.35 * ((alignment + 1) / 2) + 0.45 * np.maximum(directional, 0) + 0.20 * trend_strength, 0, 1).astype("float32")
-    bear = np.clip(0.35 * ((1 - alignment) / 2) + 0.45 * np.maximum(-directional, 0) + 0.20 * trend_strength, 0, 1).astype("float32")
+    bull = np.clip(
+        0.35 * ((alignment + 1) / 2) + 0.45 * np.maximum(directional, 0) + 0.20 * trend_strength,
+        0, 1,
+    ).astype("float32")
+    bear = np.clip(
+        0.35 * ((1 - alignment) / 2) + 0.45 * np.maximum(-directional, 0) + 0.20 * trend_strength,
+        0, 1,
+    ).astype("float32")
     sideways = (1.0 - np.clip(bull + bear, 0, 1)).astype("float32")
 
     return bull, bear, sideways
@@ -131,30 +140,40 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     bb_upper, bb_mid, bb_lower = calculate_bollinger_bands(close)
     denom_bb = (bb_upper - bb_lower).replace(0, np.nan)
-    new_cols["BB_Position"] = ((close - bb_lower) / denom_bb).fillna(0.5).clip(0, 1).astype("float32")
+    new_cols["BB_Position"] = (
+        (close - bb_lower) / denom_bb
+    ).fillna(0.5).clip(0, 1).astype("float32")
     
     atr14 = calculate_atr(df, 14).astype("float32")
     new_cols["ATR_Pct"] = (atr14 / close * 100).astype("float32")
 
     obv = calculate_obv_vectorized(df).astype("float32")
     obv_ema = calculate_ema(obv, 10).astype("float32")
-    new_cols["OBV_Trend"] = ((obv - obv_ema) / obv_ema.abs().replace(0, np.nan)).fillna(0).astype("float32")
+    obv_denom = obv_ema.abs().replace(0, np.nan)
+    new_cols["OBV_Trend"] = ((obv - obv_ema) / obv_denom).fillna(0).astype("float32")
 
     for n in [1, 5, 20]:
-        new_cols[f"Return_{n}d"] = close.pct_change(n, fill_method=None).astype("float32")
+        ret = close.pct_change(n, fill_method=None)
+        new_cols[f"Return_{n}d"] = ret.astype("float32")
 
     plus_di, minus_di, adx = calculate_directional_indicators(df)
     new_cols["ADX14"] = adx
     new_cols["DI_Diff"] = (plus_di - minus_di).astype("float32")
 
-    ma_bias_short = ((ma5 - ma20) / ma20).replace([np.inf, -np.inf], 0).fillna(0).astype("float32")
-    ma_bias_mid = ((ma20 - ma50) / ma50).replace([np.inf, -np.inf], 0).fillna(0).astype("float32")
+    ma_bias_short = (
+        (ma5 - ma20) / ma20
+    ).replace([np.inf, -np.inf], 0).fillna(0).astype("float32")
+    ma_bias_mid = (
+        (ma20 - ma50) / ma50
+    ).replace([np.inf, -np.inf], 0).fillna(0).astype("float32")
     alignment = (((ma_bias_short + ma_bias_mid) / 2).clip(-3, 3)).astype("float32")
     
     new_cols["Regime_Alignment"] = alignment
     new_cols["ADX_Momentum"] = adx.diff(3).fillna(0).astype("float32")
 
-    bull_prob, bear_prob, sideways_prob = calculate_regime_probabilities(ma5, ma20, ma50, plus_di, minus_di, adx)
+    bull_prob, bear_prob, sideways_prob = calculate_regime_probabilities(
+        ma5, ma20, ma50, plus_di, minus_di, adx
+    )
     new_cols["Regime_Prob_Bull"] = bull_prob
     new_cols["Regime_Prob_Bear"] = bear_prob
     new_cols["Regime_Prob_Sideways"] = sideways_prob
@@ -180,13 +199,17 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
         new_cols["MA_Bias_Short"] = ma_bias_short.astype("float32")
         new_cols["MA_Bias_Mid"] = ma_bias_mid.astype("float32")
         new_cols["MA_Alignment_Spread"] = (ma_bias_short - ma_bias_mid).astype("float32")
-        new_cols["Regime_Directional"] = ((plus_di - minus_di) / (plus_di + minus_di).replace(0, np.nan)).fillna(0).clip(-1, 1).astype("float32")
+        di_sum_ = (plus_di + plus_di).replace(0, np.nan)
+        new_cols["Regime_Directional"] = (
+            (plus_di - minus_di) / di_sum_
+        ).fillna(0).clip(-1, 1).astype("float32")
         new_cols["Regime_Trend_Strength"] = (adx / 100).clip(0, 1).astype("float32")
         new_cols["Target"] = (close.shift(-1) > close).astype("int8")
 
         # test_get_current_signals_keys 통과를 위해 Volume_Ratio 생성
         vol_sma20 = df["Volume"].rolling(20, min_periods=1).mean().astype("float32")
-        new_cols["Volume_Ratio"] = (df["Volume"] / vol_sma20.replace(0, np.nan)).fillna(1).astype("float32")
+        vol_denom = vol_sma20.replace(0, np.nan)
+        new_cols["Volume_Ratio"] = (df["Volume"] / vol_denom).fillna(1).astype("float32")
 
     df = df.assign(**new_cols)
     return df
