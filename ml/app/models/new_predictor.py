@@ -19,19 +19,16 @@ from sklearn.metrics import accuracy_score
 from sklearn.model_selection import TimeSeriesSplit
 
 from ..core.config import (
-    DATA,
-    PYTORCH,
-    PYTORCH_SCANNER,
     XGBOOST,
     XGBOOST_SCANNER,
 )
 from .predictor import (
-    XGBoostPredictor,
     LSTMPredictor,
-    prepare_training_data,
-    get_feature_columns,
-    _build_result,
+    XGBoostPredictor,
     _auto_params,
+    _build_result,
+    get_feature_columns,
+    prepare_training_data,
 )
 
 warnings.filterwarnings("ignore")

@@ -44,9 +44,9 @@ async def predict(req: PredictRequest) -> PredictResponse:
         from ....pipelines.fetcher import fetch_stock_data
         from ....pipelines.technical import (
             add_all_indicators,
-            label_training_target,
             get_current_signals,
             get_support_resistance,
+            label_training_target,
         )
 
         ticker = req.ticker.strip().upper()

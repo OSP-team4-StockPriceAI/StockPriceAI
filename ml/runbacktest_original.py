@@ -1,4 +1,5 @@
 import os
+
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -8,16 +9,17 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["REDIS_URL"] = "redis://localhost:6379/1"
 
 import torch
+
 torch.set_num_threads(1)
 
-import pandas as pd
-import numpy as np
-from datetime import datetime
 
+import numpy as np
+import pandas as pd
 from ml.app.models.predictor import EnsemblePredictor
 from ml.app.pipelines.fetcher import fetch_stock_data
-from ml.app.pipelines.technical import add_all_indicators
 from ml.app.pipelines.get_recent_SP500_tickers import get_sp500_tickers
+from ml.app.pipelines.technical import add_all_indicators
+
 
 def tabulate(data, headers=None, exclude=None):
     if exclude is None:
@@ -184,9 +186,9 @@ def run_backtest_simulation(
     total_days: int,
     sample_df: pd.DataFrame,
 ) -> dict:
-    print(f"\n" + "=" * 60)
+    print("\n" + "=" * 60)
     print(f"▶️  [{model_name}] 시뮬레이션을 시작합니다...")
-    print(f"=" * 60)
+    print("=" * 60)
 
     def _get_close_price(df_val, date_str):
         try:

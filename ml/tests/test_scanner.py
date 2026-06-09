@@ -18,12 +18,11 @@ scanner.py 단위 테스트
 
 import json
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
 import pytest
-
 
 # ─────────────────────────────────────────────────────────────
 # 픽스처 / 헬퍼
@@ -419,6 +418,7 @@ class TestScanProgress:
 
     def test_elapsed_sec_increases_over_time(self):
         import time
+
         from app.pipelines.scanner import ScanProgress
         p = ScanProgress(total=10)
         time.sleep(0.05)
@@ -431,6 +431,7 @@ class TestScanProgress:
 
     def test_eta_sec_is_numeric_after_progress(self):
         import time
+
         from app.pipelines.scanner import ScanProgress
         p = ScanProgress(total=10)
         time.sleep(0.05)

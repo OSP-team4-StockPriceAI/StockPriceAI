@@ -1,10 +1,10 @@
 """POST /api/v1/predict 엔드포인트 테스트"""
 
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pandas as pd
-import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import MagicMock, patch
 
 
 def _make_df(n: int = 100) -> pd.DataFrame:

@@ -176,7 +176,7 @@ def analyze_single_ticker(ticker: str, period_days: int = 400) -> dict[str, Any]
     try:
         from ..models.predictor import EnsemblePredictor
         from .fetcher import fetch_stock_data
-        from .technical import add_all_indicators, label_training_target, get_current_signals
+        from .technical import add_all_indicators, get_current_signals, label_training_target
 
         df, info = fetch_stock_data(ticker, period_days=period_days)
         if df is None or info is None or len(df) < 60:

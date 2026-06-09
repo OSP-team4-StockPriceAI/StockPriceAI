@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-
 _START_PAYLOAD = {"tickers": ["AAPL", "MSFT"], "max_workers": 1, "force_refresh": False, "period_days": 400}
 
 
