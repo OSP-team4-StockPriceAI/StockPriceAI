@@ -37,7 +37,7 @@ log = logging.getLogger("stockai.ml")
 
 class RegimeDetector:
     """테스트 스펙에 맞춘 시장 국면 진단 및 모델 스위칭 제어 인터페이스"""
-    def __init__(self, lookback: int = 20, **kwargs) -> None:
+    def __init__(self, lookback: int = 20, **kwargs: Any) -> None:
         self.lookback = lookback
 
     def detect(self, df: pd.DataFrame) -> dict[str, Any]:
@@ -557,7 +557,7 @@ class LSTMPredictor:
         try:
             from tensorflow import keras
         except Exception:
-            import tensorflow.keras as keras  # type: ignore[no-redef]
+            import tensorflow.keras as keras
 
         SEQ = self.sequence_length
         X_seq = np.array([X_sc[i - SEQ:i] for i in range(SEQ, len(X_sc))])
