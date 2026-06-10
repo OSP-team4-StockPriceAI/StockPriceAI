@@ -8,22 +8,17 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["REDIS_URL"] = "redis://localhost:6379/1"
 
-import torch
-
-torch.set_num_threads(1)  # noqa: E402
-
 
 import numpy as np
 import pandas as pd
 
 # noqa: E402
-from ml.app.models.predictor import EnsemblePredictor  # noqa: E402
+from ml.app.models.predictor import LSTMFirstStackingPredictor  # noqa: E402
 from ml.app.pipelines.fetcher import fetch_stock_data  # noqa: E402
 from ml.app.pipelines.get_recent_SP500_tickers import get_sp500_tickers  # noqa: E402
-from ml.app.pipelines.technical import add_all_indicators  # noqa: E402
+from ml.app.pipelines.technical import add_all_indicators, label_training_target  # noqa: E402
 
 
-  # noqa: E402
 def tabulate(data, headers=None, exclude=None):
     if exclude is None:
         exclude = []
@@ -141,10 +136,11 @@ print(f"[설정] 스캐너 갱신 주기: {SCAN_REFRESH_INTERVAL_DAYS}거래일\
 
 import concurrent.futures
 
+  # noqa: E402
 print(
     f"1. {len(TICKERS)}개 실제 스캐너 후보 종목의 전체 역사적 데이터(550일)를"
     " 병렬 로드하는 중 (스레드 16개)..."
-)  # noqa: E402
+)
 stock_data_dict = {}
 
 def load_ticker_data(ticker):
@@ -152,6 +148,7 @@ def load_ticker_data(ticker):
         df, info = fetch_stock_data(ticker, period_days=550)
         if df is not None and len(df) >= 60:
             df = add_all_indicators(df)
+            df = label_training_target(df)  # Target 컬럼 추가
             return ticker, df, info
     except Exception:
         pass
@@ -241,14 +238,39 @@ def run_backtest_simulation(
         if is_scan_day:
             print(
                 f"\n   🔄 [{model_name} 스캐너 갱신일: {current_date}]"
-                f" 상위 {TOP_N_STOCKS}개 종목 스캔 중..."
+                f" 상위 {TOP_N_STOCKS}개 종목 스캔 중... (총 {len(stock_data_dict)}개 종목)"
             )
             scan_results = []
-            for ticker, (df, info) in stock_data_dict.items():
+            scan_count = 0
+            
+            def scan_ticker_wrapper(ticker_and_data):
+                """각 종목 분석 (병렬 실행용)"""
+                ticker, (df, info) = ticker_and_data
                 df_as_of = df.loc[:current_date].iloc[:-1]
-                res = analyze_single_ticker_as_of(ticker, df_as_of, info, model_cls)
-                if res:
-                    scan_results.append(res)
+                return ticker, analyze_single_ticker_as_of(ticker, df_as_of, info, model_cls)
+            
+            # 병렬 스캔 (8개 스레드)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as scan_executor:
+                futures = {scan_executor.submit(scan_ticker_wrapper, (ticker, (df, info))): ticker 
+                          for ticker, (df, info) in stock_data_dict.items()}
+                
+                for future in concurrent.futures.as_completed(futures):
+                    scan_count += 1
+                    ticker, res = future.result()
+                    if res:
+                        scan_results.append(res)
+                    
+                    # 10개 단위 또는 마지막에 진행률 표시
+                    if scan_count % 10 == 0 or scan_count == len(stock_data_dict):
+                        progress_pct = int(scan_count * 100 / len(stock_data_dict))
+                        bar_length = 20
+                        filled = int(bar_length * scan_count / len(stock_data_dict))
+                        bar = "█" * filled + "░" * (bar_length - filled)
+                        print(
+                            f"      [스캔 진행률] {bar} {scan_count:3d}"
+                            f"/{len(stock_data_dict):3d} ({progress_pct:3d}%)",
+                            flush=True,
+                        )
             
             if len(scan_results) > 0:
                 df_scan = pd.DataFrame(scan_results)
@@ -459,10 +481,10 @@ def run_backtest_simulation(
     }
 
 
-# 오리지널 앙상블 단독 실행
-orig_res = run_backtest_simulation(
-    model_name="Original Ensemble (XGB -> LSTM)",
-    model_cls=EnsemblePredictor,
+# 신규 Stacking 모델 단독 실행
+new_res = run_backtest_simulation(
+    model_name="LSTM-First Stacking (LSTM -> XGB)",
+    model_cls=LSTMFirstStackingPredictor,
     stock_data_dict=stock_data_dict,
     tickers=TICKERS,
     start_idx=start_idx,
@@ -473,20 +495,17 @@ orig_res = run_backtest_simulation(
 # 📊 최종 결과 비교 테이블 출력
 comparison_data = [
     {
-        "Model Name": orig_res["model_name"],
-        "Initial Capital": f"${orig_res['initial_capital']:,.2f}",
-        "Final Value": f"${orig_res['final_cash']:,.2f}",
-        "Cumulative Return": f"{orig_res['total_return_pct']:.2f}%",
-        "Win Rate (Sells)": f"{orig_res['win_rate']:.1f}%",
-        "Direction Hit Rate": f"{orig_res['hit_rate']:.1f}%",
+        "Model Name": new_res["model_name"],
+        "Initial Capital": f"${new_res['initial_capital']:,.2f}",
+        "Final Value": f"${new_res['final_cash']:,.2f}",
+        "Cumulative Return": f"{new_res['total_return_pct']:.2f}%",
+        "Win Rate (Sells)": f"{new_res['win_rate']:.1f}%",
+        "Direction Hit Rate": f"{new_res['hit_rate']:.1f}%",
     }
 ]
 
 print("\n" + "=" * 90)
-print(
-    "             📊 오리지널 앙상블 모델 성과"
-    " 및 적중률(Hit Rate) 최종 요약"
-)
+print("             📊 LSTM-First Stacking 모델 성과 및 적중률(Hit Rate) 최종 요약")
 print("=" * 90)
 print(tabulate(comparison_data))
 print("=" * 90)
