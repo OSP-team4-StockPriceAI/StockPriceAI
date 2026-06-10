@@ -72,7 +72,7 @@ def save_cache(ticker: str, data: dict[str, Any], ttl_hours: int = CACHE_TTL_H) 
         r = _get_redis()
         r.setex(
             f"{CACHE_KEY_PREFIX}{ticker}",
-            int(ttl_hours * 3600),
+            ttl_hours * 3600,
             json.dumps(data, default=str),
         )
     except Exception:
@@ -102,7 +102,7 @@ def save_all_cache(updates: dict[str, dict[str, Any]], ttl_hours: int = CACHE_TT
     try:
         r = _get_redis()
         pipe = r.pipeline()
-        ttl_sec = int(ttl_hours * 3600)
+        ttl_sec = ttl_hours * 3600
         for ticker, data in updates.items():
             pipe.setex(
                 f"{CACHE_KEY_PREFIX}{ticker}",

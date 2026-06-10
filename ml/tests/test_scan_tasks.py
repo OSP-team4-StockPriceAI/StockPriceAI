@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-
 # ── _save_progress ────────────────────────────────────────────
 
 @patch("app.workers.scan_tasks._get_redis")

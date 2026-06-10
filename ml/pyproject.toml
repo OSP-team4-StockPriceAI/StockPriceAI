@@ -36,6 +36,7 @@ plotly = "^5.20.0"
 # Async queue
 celery = { extras = ["redis"], version = "^5.4.0" }
 redis = "^5.0.6"
+pandas-market-calendars = "^4.4.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.0"

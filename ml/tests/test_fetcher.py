@@ -17,7 +17,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-
 # ─────────────────────────────────────────────────────────────
 # 픽스처 / 헬퍼
 # ─────────────────────────────────────────────────────────────
@@ -585,6 +584,7 @@ class TestGetMarketContext:
 
 from unittest.mock import MagicMock, patch
 
+
 class TestSP500Tickers:
     def test_normalize_ticker(self):
         from app.pipelines.get_recent_SP500_tickers import _normalize_ticker
@@ -599,7 +599,7 @@ class TestSP500Tickers:
         assert result == []
 
     def test_get_sp500_tickers_uses_fallback_when_fetch_fails(self):
-        from app.pipelines.get_recent_SP500_tickers import get_sp500_tickers, _FALLBACK_TICKERS
+        from app.pipelines.get_recent_SP500_tickers import get_sp500_tickers
         get_sp500_tickers.cache_clear()
         with patch("app.pipelines.get_recent_SP500_tickers._fetch_from_wikipedia", return_value=[]):
             result = get_sp500_tickers()

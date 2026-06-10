@@ -11,6 +11,8 @@ from datetime import datetime
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
+import pandas as pd
+import pandas_market_calendars as mcal
 import redis
 
 from ..core.config import settings
@@ -289,121 +291,17 @@ def scheduled_market_scan(
 # 미국 공휴일 유틸
 # ─────────────────────────────────────────────────────────────
 
+_NYSE_CALENDAR = mcal.get_calendar("NYSE")
+
+
 def _is_us_market_holiday(dt: datetime) -> bool:
     """
-    NYSE 주요 공휴일 여부를 반환합니다.
-    고정 공휴일 + 부활절(변동) 커버.
-    완전한 정확도가 필요하다면 `pandas_market_calendars` 사용을 권장합니다.
+    NYSE 휴장일 여부를 반환합니다.
+    pandas_market_calendars 라이브러리를 사용하므로
+    Good Friday, Juneteenth 등 모든 공휴일 및 대체 공휴일이 자동 반영됩니다.
     """
-    year, month, day = dt.year, dt.month, dt.day
-
-    # 고정 공휴일 (월요일 대체 포함하지 않음 — 아래 _observed 로직에서 처리)
-    fixed_holidays = {
-        (1, 1),    # 새해
-        (7, 4),    # 독립기념일
-        (12, 25),  # 크리스마스
-    }
-
-    # 변동 공휴일 계산
-    variable_holidays = {
-        _mlk_day(year),          # 1월 셋째 월요일
-        _presidents_day(year),   # 2월 셋째 월요일
-        _good_friday(year),      # 부활절 전 금요일
-        _memorial_day(year),     # 5월 마지막 월요일
-        _juneteenth(year),       # 6월 19일 (2022년~)
-        _labor_day(year),        # 9월 첫째 월요일
-        _thanksgiving(year),     # 11월 넷째 목요일
-    }
-
-    if (month, day) in fixed_holidays:
-        return True
-
-    # 토요일 공휴일 → 금요일 대체 / 일요일 → 월요일 대체
-    for h_month, h_day in fixed_holidays:
-        h = datetime(year, h_month, h_day)
-        if h.weekday() == 5 and (month, day) == (h_month, h_day - 1):  # 토 → 금
-            return True
-        if h.weekday() == 6 and (month, day) == (h_month, h_day + 1):  # 일 → 월
-            return True
-
-    return (month, day) in variable_holidays
-
-
-def _nth_weekday(year: int, month: int, weekday: int, n: int) -> tuple[int, int]:
-    """해당 월의 n번째 weekday (0=월 … 6=일) → (month, day)"""
-    count = 0
-    for d in range(1, 32):
-        try:
-            dt = datetime(year, month, d)
-        except ValueError:
-            break
-        if dt.weekday() == weekday:
-            count += 1
-            if count == n:
-                return (month, d)
-    return (month, 1)  # fallback (발생 안 함)
-
-
-def _last_weekday(year: int, month: int, weekday: int) -> tuple[int, int]:
-    """해당 월의 마지막 weekday → (month, day)"""
-    result = (month, 1)
-    for d in range(1, 32):
-        try:
-            dt = datetime(year, month, d)
-        except ValueError:
-            break
-        if dt.weekday() == weekday:
-            result = (month, d)
-    return result
-
-
-def _mlk_day(year: int) -> tuple[int, int]:
-    return _nth_weekday(year, 1, 0, 3)   # 1월 셋째 월요일
-
-
-def _presidents_day(year: int) -> tuple[int, int]:
-    return _nth_weekday(year, 2, 0, 3)   # 2월 셋째 월요일
-
-
-def _memorial_day(year: int) -> tuple[int, int]:
-    return _last_weekday(year, 5, 0)      # 5월 마지막 월요일
-
-
-def _labor_day(year: int) -> tuple[int, int]:
-    return _nth_weekday(year, 9, 0, 1)   # 9월 첫째 월요일
-
-
-def _thanksgiving(year: int) -> tuple[int, int]:
-    return _nth_weekday(year, 11, 3, 4)  # 11월 넷째 목요일
-
-
-def _juneteenth(year: int) -> tuple[int, int]:
-    if year < 2022:
-        return (6, 99)  # 존재 안 함 (매칭 불가 값)
-    return (6, 19)
-
-
-def _good_friday(year: int) -> tuple[int, int]:
-    """부활절 전 금요일 (Gauss 알고리즘)"""
-    a = year % 19
-    b = year // 100
-    c = year % 100
-    d = b // 4
-    e = b % 4
-    f = (b + 8) // 25
-    g = (b - f + 1) // 3
-    h = (19 * a + b - d - g + 15) % 30
-    i = c // 4
-    k = c % 4
-    l = (32 + 2 * e + 2 * i - h - k) % 7
-    m = (a + 11 * h + 22 * l) // 451
-    month = (h + l - 7 * m + 114) // 31
-    day = ((h + l - 7 * m + 114) % 31) + 1
-    # 부활절 → 2일 전 = 금요일
-    easter = datetime(year, month, day)
-    from datetime import timedelta
-    gf = easter - timedelta(days=2)
-    return (gf.month, gf.day)
+    ts = pd.Timestamp(dt.date())
+    return ts in _NYSE_CALENDAR.holidays().holidays
 
 
 # ─────────────────────────────────────────────────────────────
