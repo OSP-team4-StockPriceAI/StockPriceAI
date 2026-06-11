@@ -229,6 +229,7 @@ def merge_sentiment_into_df(
         log.warning("merge_sentiment_into_df: Date 컬럼/DatetimeIndex 없음 — 감정지수 0으로 채움")
         for col in ["Sentiment_Score", "Sentiment_Positive", "Sentiment_Negative"]:
             df[col] = 0.0
+        df["Sentiment_Missing"] = 1.0
         return df
     else:
         df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
@@ -236,6 +237,7 @@ def merge_sentiment_into_df(
     if sent_df.empty:
         for col in ["Sentiment_Score", "Sentiment_Positive", "Sentiment_Negative"]:
             df[col] = 0.0
+        df["Sentiment_Missing"] = 1.0
         return df
 
     sent_cols = ["date", "Sentiment_Score", "Sentiment_Positive", "Sentiment_Negative"]
@@ -244,6 +246,9 @@ def merge_sentiment_into_df(
         on="Date",
         how="left",
     )
+    # 뉴스가 없는 날을 명시적으로 표시 (0 = 데이터 있음, 1 = 데이터 없음)
+    merged["Sentiment_Missing"] = merged["Sentiment_Score"].isna().astype("float32")
+
     for col in ["Sentiment_Score", "Sentiment_Positive", "Sentiment_Negative"]:
         merged[col] = merged.get(col, pd.Series(0.0, index=merged.index)).fillna(0.0)
 
