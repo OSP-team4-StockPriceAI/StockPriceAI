@@ -13,7 +13,7 @@ log = logging.getLogger("stockai.api.predict")
 class PredictRequest(BaseModel):
     ticker: str = Field(..., description="종목 코드 (예: AAPL, 005930.KS)")
     period_days: int = Field(default=400, ge=100, le=3000, description="학습 기간(일)")
-    include_sentiment: bool = Field(default=False, description="감성 분석 포함 여부")
+    include_sentiment: bool = Field(default=True, description="감성 분석 포함 여부")
     force_lstm: bool = Field(default=True, description="LSTM 강제 사용")
 
 
@@ -31,16 +31,14 @@ class PredictResponse(BaseModel):
 
 @router.post("", response_model=PredictResponse, summary="단일 종목 ML 예측")
 async def predict(req: PredictRequest) -> PredictResponse:
-    """
-    종목의 다음날 상승/하락 확률을 XGBoost + LSTM 앙상블로 예측합니다.
-
-    - **signal**: BUY / HOLD / SELL
-    - **up_probability**: 상승 확률 (0~1)
-    - **confidence**: 신뢰도 (max(up, down) 확률)
-    """
     try:
         from ....models.predictor import EnsemblePredictor
-        from ....models.sentiment import add_sentiment_to_features, analyze_news_sentiment
+        from ....models.sentiment import analyze_news_sentiment
+        from ....models.sentiment_store import (
+            merge_sentiment_into_df,
+            purge_old_sentiments,
+            save_sentiment_to_backend_async,
+        )
         from ....pipelines.fetcher import fetch_stock_data
         from ....pipelines.technical import (
             add_all_indicators,
@@ -56,15 +54,36 @@ async def predict(req: PredictRequest) -> PredictResponse:
             raise HTTPException(status_code=404, detail=f"데이터 없음: {ticker}")
 
         df = add_all_indicators(df)
-        df = label_training_target(df)  # Target 컬럼 생성 (학습에 필요)
+        df = label_training_target(df)
 
         if req.include_sentiment:
-            _, sent_summary = analyze_news_sentiment(
+            # 1. 뉴스 분석 — news_df(개별 기사) + summary(요약) 반환
+            news_df, sent_summary = analyze_news_sentiment(
                 ticker=ticker,
                 company_name=info.get("shortName", "") if info else "",
                 sector=info.get("sector", "") if info else "",
             )
-            df = add_sentiment_to_features(df, sent_summary["avg_sentiment"])
+
+            # 2. news_df를 날짜별로 그룹핑해서 Backend DB에 배치 저장 (중복 날짜 skip)
+            await save_sentiment_to_backend_async(ticker, news_df)
+
+            # 3. 학습 기간 초과 레코드 삭제
+            purge_old_sentiments(ticker, req.period_days)
+
+            # 4. DB 이력을 학습 df에 merge (LSTM 피처용)
+            df = merge_sentiment_into_df(df, ticker, limit=req.period_days)
+
+            # 5. 오늘 행 감정지수 보정 (방금 저장됐지만 DB 응답 전일 수 있으므로)
+            today_score = sent_summary.get("avg_sentiment", 0.0)
+            for col, val in [
+                ("Sentiment_Score",    today_score),
+                ("Sentiment_Positive", max(0.0, today_score)),
+                ("Sentiment_Negative", max(0.0, -today_score)),
+            ]:
+                if col not in df.columns:
+                    df[col] = 0.0
+                if df[col].iloc[-1] == 0.0:
+                    df.loc[df.index[-1], col] = val
 
         predictor = EnsemblePredictor(scanner_mode=False)
         train_metrics = predictor.train(
@@ -85,12 +104,10 @@ async def predict(req: PredictRequest) -> PredictResponse:
             "signals": {k: {"action": v[0], "description": v[1]} for k, v in signals.items()},
             "support_resistance": sr,
             "latest": {
-                "rsi14": float(df["RSI14"].iloc[-1]) if "RSI14" in df else None,
-                "bb_position": float(df["BB_Position"].iloc[-1]) if "BB_Position" in df else None,
-                "volume_ratio": (
-                    float(df["Volume_Ratio"].iloc[-1]) if "Volume_Ratio" in df else None
-                ),
-                "macd": float(df["MACD"].iloc[-1]) if "MACD" in df else None,
+                "rsi14":        float(df["RSI14"].iloc[-1])        if "RSI14"        in df else None,
+                "bb_position":  float(df["BB_Position"].iloc[-1])  if "BB_Position"  in df else None,
+                "volume_ratio": float(df["Volume_Ratio"].iloc[-1]) if "Volume_Ratio" in df else None,
+                "macd":         float(df["MACD"].iloc[-1])         if "MACD"         in df else None,
             },
         }
 
