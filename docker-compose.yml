@@ -27,35 +27,35 @@ services:
     restart: unless-stopped
 
   backend:
-      build:
-        context: ./backend
-        target: development
-      ports:
-        - "8000:8000"
-      volumes:
-        - ./backend/app:/app/app
-      # ─── [수정 및 추가 구성] ──────────────────────────────────────────────────
-      # alembic을 사용하신다면 'poetry run alembic upgrade head'를 실행하고,
-      # 만약 자체 파이썬 스크립트(예: app/init_db.py)가 있다면 그것을 실행하도록 묶어줍니다.
-      command: poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000
-      # ──────────────────────────────────────────────────────────────────────────
-      environment:
-        - DATABASE_URL=postgresql://stockai:stockai@postgres:5432/stockai
-        - REDIS_URL=redis://redis:6379/0
-        - SECRET_KEY=${SECRET_KEY:-dev-secret-change-me}
-        - ML_SERVICE_URL=http://ml:8001
-      depends_on:
-        postgres:
-          condition: service_healthy
-        redis:
-          condition: service_started
-      healthcheck:
-        test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-        interval: 5s
-        timeout: 10s
-        retries: 12
-        start_period: 30s
-      restart: unless-stopped
+    build:
+      context: ./backend
+      target: development
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
+    # ─── [수정] alembic 마이그레이션 후 서버 기동 ──────────────────────
+    command: >
+      sh -c "poetry run alembic upgrade head &&
+             poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    # ──────────────────────────────────────────────────────────────────────────
+    environment:
+      - DATABASE_URL=postgresql://stockai:stockai@postgres:5432/stockai
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-change-me}
+      - ML_SERVICE_URL=http://ml:8001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
 
   ml:
     build:
@@ -68,6 +68,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/2
+      - BACKEND_URL=http://backend:8000  # [추가] ML → Backend 감정지수 POST 경로 명시
     depends_on:
       - redis
     healthcheck:
@@ -88,6 +89,7 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/2
       - REDIS_URL=redis://redis:6379/1
+      - BACKEND_URL=http://backend:8000  # [추가] worker도 동일하게 명시
     depends_on:
       - redis
     restart: unless-stopped
