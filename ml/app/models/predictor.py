@@ -124,7 +124,8 @@ BASE_FEATURES = [
     "Body_Size", "Upper_Shadow", "Lower_Shadow", "Is_Bullish",
     "Momentum_Normalized", "MACD_Cross",
 ]
-SENTIMENT_FEATURES = ["Sentiment_Score", "Sentiment_Positive", "Sentiment_Negative", "Sentiment_Missing"]
+SENTIMENT_FEATURES = ["Sentiment_Score", "Sentiment_Positive",
+                             "Sentiment_Negative", "Sentiment_Missing"]
 
 
 def get_feature_columns(df: pd.DataFrame, include_sentiment: bool = True) -> list[str]:

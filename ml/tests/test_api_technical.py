@@ -103,11 +103,11 @@ def test_get_technical_unexpected_exception_returns_500(client: TestClient) -> N
     assert resp.status_code == 500
 
 
+import pandas as pd  # noqa: E402  (환경 패치 후 import — 파일 상단 이동 불가)
+
 # ─────────────────────────────────────────────────────────────
 # 추가 엣지케이스 테스트
 # ─────────────────────────────────────────────────────────────
-
-import pandas as pd
 
 
 def test_get_technical_no_data_returns_404_v2(client: TestClient) -> None:

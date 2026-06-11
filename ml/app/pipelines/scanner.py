@@ -176,7 +176,11 @@ def analyze_single_ticker(ticker: str, period_days: int = 400) -> dict[str, Any]
     try:
         from ..models.predictor import EnsemblePredictor
         from ..models.sentiment import analyze_news_sentiment
-        from ..models.sentiment_store import merge_sentiment_into_df, purge_old_sentiments, save_sentiment_to_backend
+        from ..models.sentiment_store import (
+            merge_sentiment_into_df,
+            purge_old_sentiments,
+            save_sentiment_to_backend,
+        )
         from .fetcher import fetch_stock_data
         from .technical import add_all_indicators, get_current_signals, label_training_target
 

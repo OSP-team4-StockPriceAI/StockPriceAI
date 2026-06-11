@@ -520,7 +520,7 @@ class TestProcessOne:
         with patch("app.pipelines.scanner.is_cache_valid", return_value=False), \
              patch("app.pipelines.scanner.analyze_single_ticker", return_value=new), \
              patch("app.pipelines.scanner.dp_blend",
-                   return_value={**new, "blended": True}) as mock_blend:
+                   return_value={**new, "blended": True}):
             _, result, status = _process_one(
                 "AAPL", old, force_refresh=False, price_threshold_pct=2.0
             )

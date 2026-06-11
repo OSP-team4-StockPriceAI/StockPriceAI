@@ -44,7 +44,8 @@ def test_predict_success_returns_200(client: TestClient) -> None:
     df = _make_df()
     pred_mock = _make_predictor_mock("BUY")
 
-    with patch("app.pipelines.fetcher.fetch_stock_data", return_value=(df, {"shortName": "Apple"})), \
+    with patch("app.pipelines.fetcher.fetch_stock_data", 
+                    return_value=(df, {"shortName": "Apple"})), \
          patch("app.pipelines.technical.add_all_indicators", return_value=df), \
          patch("app.models.predictor.EnsemblePredictor", return_value=pred_mock), \
          patch("app.pipelines.technical.get_current_signals", return_value=_SIGNALS), \
@@ -101,12 +102,14 @@ def test_predict_with_sentiment_calls_analyze(client: TestClient) -> None:
         "impact_score_avg": 0.05,
     }
 
-    with patch("app.pipelines.fetcher.fetch_stock_data", return_value=(df, {"shortName": "Apple", "sector": "Tech"})), \
+    with patch("app.pipelines.fetcher.fetch_stock_data", 
+                            return_value=(df, {"shortName": "Apple", "sector": "Tech"})), \
          patch("app.pipelines.technical.add_all_indicators", return_value=df), \
          patch("app.models.predictor.EnsemblePredictor", return_value=pred_mock), \
          patch("app.pipelines.technical.get_current_signals", return_value=_SIGNALS), \
          patch("app.pipelines.technical.get_support_resistance", return_value=_SR), \
-         patch("app.models.sentiment.analyze_news_sentiment", return_value=(pd.DataFrame(), sent_summary)) as mock_sent, \
+         patch("app.models.sentiment.analyze_news_sentiment", 
+                                    return_value=(pd.DataFrame(), sent_summary)) as mock_sent, \
          patch("app.models.sentiment.add_sentiment_to_features", return_value=df):
         resp = client.post("/api/v1/predict", json={**_PAYLOAD, "include_sentiment": True})
 
@@ -128,7 +131,6 @@ def test_predict_unexpected_exception_returns_500(client: TestClient) -> None:
 # 추가 엣지케이스 테스트
 # ─────────────────────────────────────────────────────────────
 
-import pandas as pd
 
 
 def test_predict_missing_ticker_field_returns_422(client: TestClient) -> None:

@@ -11,7 +11,6 @@ from app.schemas.sentiment import (
     SentimentBatchSaveResponse,
     SentimentHistoryItem,
     SentimentSaveRequest,
-    SentimentSaveResponse,
 )
 
 log = logging.getLogger("stockai.backend.sentiment")

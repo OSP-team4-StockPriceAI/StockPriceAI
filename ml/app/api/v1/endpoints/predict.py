@@ -104,10 +104,14 @@ async def predict(req: PredictRequest) -> PredictResponse:
             "signals": {k: {"action": v[0], "description": v[1]} for k, v in signals.items()},
             "support_resistance": sr,
             "latest": {
-                "rsi14":        float(df["RSI14"].iloc[-1])        if "RSI14"        in df else None,
-                "bb_position":  float(df["BB_Position"].iloc[-1])  if "BB_Position"  in df else None,
-                "volume_ratio": float(df["Volume_Ratio"].iloc[-1]) if "Volume_Ratio" in df else None,
-                "macd":         float(df["MACD"].iloc[-1])         if "MACD"         in df else None,
+                "rsi14":        
+                float(df["RSI14"].iloc[-1])        if "RSI14"        in df else None,
+                "bb_position":  
+                float(df["BB_Position"].iloc[-1])  if "BB_Position"  in df else None,
+                "volume_ratio": 
+                float(df["Volume_Ratio"].iloc[-1]) if "Volume_Ratio" in df else None,
+                "macd":         
+                float(df["MACD"].iloc[-1])         if "MACD"         in df else None,
             },
         }
 

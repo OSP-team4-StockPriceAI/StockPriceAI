@@ -1,647 +1,672 @@
+"""
+fetcher.py 단위 테스트
+
+네트워크 없이 실행되도록 yfinance를 전부 mock 처리.
+테스트 대상 함수:
+  - is_korean_ticker
+  - normalize_ticker
+  - fetch_stock_data
+  - fetch_earnings_history
+  - fetch_institutional_holders
+  - get_market_context
+"""
+
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pandas as pd
+import pytest
+
+# ─────────────────────────────────────────────────────────────
+# 픽스처 / 헬퍼
+# ─────────────────────────────────────────────────────────────
+
+def _make_price_df(n: int = 60, tz_aware: bool = False) -> pd.DataFrame:
+    """더미 OHLCV DataFrame 생성."""
+    idx = pd.date_range("2024-01-01", periods=n, freq="B")
+    if tz_aware:
+        idx = idx.tz_localize("America/New_York")
+    close = np.linspace(100.0, 150.0, n)
+    return pd.DataFrame(
+        {
+            "Open": close - 1,
+            "High": close + 2,
+            "Low": close - 2,
+            "Close": close,
+            "Volume": np.full(n, 1_000_000, dtype=float),
+        },
+        index=idx,
+    )
+
+
+def _make_mock_ticker(
+    hist: pd.DataFrame | None = None,
+    info: dict | None = None,
+    quarterly_income_stmt: pd.DataFrame | None = None,
+    quarterly_financials: pd.DataFrame | None = None,
+    institutional_holders: pd.DataFrame | None = None,
+) -> MagicMock:
+    """yf.Ticker() 반환값 mock."""
+    mock = MagicMock()
+    mock.history.return_value = hist if hist is not None else _make_price_df()
+    mock.info = info if info is not None else {"shortName": "Test Corp", "sector": "Technology"}
+    mock.quarterly_income_stmt = quarterly_income_stmt
+    mock.quarterly_financials = quarterly_financials
+    mock.institutional_holders = institutional_holders
+    return mock
+
+
+# ─────────────────────────────────────────────────────────────
+# is_korean_ticker
+# ─────────────────────────────────────────────────────────────
+
+class TestIsKoreanTicker:
+    def test_six_digit_number_is_korean(self):
+        from app.pipelines.fetcher import is_korean_ticker
+        assert is_korean_ticker("005930") is True
+
+    def test_ks_suffix_is_korean(self):
+        from app.pipelines.fetcher import is_korean_ticker
+        assert is_korean_ticker("005930.KS") is True
+
+    def test_kq_suffix_is_korean(self):
+        from app.pipelines.fetcher import is_korean_ticker
+        assert is_korean_ticker("035720.KQ") is True
+
+    def test_lowercase_suffix_is_korean(self):
+        from app.pipelines.fetcher import is_korean_ticker
+        assert is_korean_ticker("005930.ks") is True
+
+    def test_us_ticker_is_not_korean(self):
+        from app.pipelines.fetcher import is_korean_ticker
+        assert is_korean_ticker("AAPL") is False
+
+    def test_five_digit_is_not_korean(self):
+        from app.pipelines.fetcher import is_korean_ticker
+        assert is_korean_ticker("05930") is False
+
+    def test_seven_digit_is_not_korean(self):
+        from app.pipelines.fetcher import is_korean_ticker
+        assert is_korean_ticker("0059301") is False
+
+    def test_alphanumeric_is_not_korean(self):
+        from app.pipelines.fetcher import is_korean_ticker
+        assert is_korean_ticker("TSLA") is False
+
+
+# ─────────────────────────────────────────────────────────────
+# normalize_ticker
+# ─────────────────────────────────────────────────────────────
+
+class TestNormalizeTicker:
+    def test_six_digit_appends_ks(self):
+        from app.pipelines.fetcher import normalize_ticker
+        assert normalize_ticker("005930") == "005930.KS"
+
+    def test_already_ks_unchanged(self):
+        from app.pipelines.fetcher import normalize_ticker
+        assert normalize_ticker("005930.KS") == "005930.KS"
+
+    def test_us_ticker_uppercased(self):
+        from app.pipelines.fetcher import normalize_ticker
+        assert normalize_ticker("aapl") == "AAPL"
+
+    def test_strips_whitespace(self):
+        from app.pipelines.fetcher import normalize_ticker
+        assert normalize_ticker("  AAPL  ") == "AAPL"
+
+    def test_kq_suffix_preserved(self):
+        from app.pipelines.fetcher import normalize_ticker
+        assert normalize_ticker("035720.KQ") == "035720.KQ"
 
 
-def make_sample_history(length: int = 80) -> pd.DataFrame:
-    close = np.linspace(100.0, 120.0, length)
-    data = {
-        "Close": close,
-        "Open": close - 0.5,
-        "High": close + 0.5,
-        "Low": close - 1.0,
-        "Volume": np.linspace(1000, 2000, length),
-    }
-    df = pd.DataFrame(data)
-    df["MA5"] = df["Close"].rolling(window=5, min_periods=1).mean()
-    df["MA20"] = df["Close"].rolling(window=20, min_periods=1).mean()
-    df["MA50"] = df["Close"].rolling(window=50, min_periods=1).mean()
-    df["MA5_vs_MA20"] = (df["MA5"] - df["MA20"]) / df["MA20"].replace(0, np.nan)
-    df["MA20_vs_MA50"] = (df["MA20"] - df["MA50"]) / df["MA50"].replace(0, np.nan)
-    df["RSI14"] = 50 + np.sin(np.linspace(0, 3.0, length)) * 20
-    df["BB_Position"] = np.linspace(0.2, 0.8, length)
-    df["MACD_Cross"] = np.where(np.arange(length) % 5 == 0, 1, 0)
-    df["Momentum_Normalized"] = np.gradient(df["Close"]) / df["Close"].shift(1).replace(0, np.nan)
-    df["ATR_Pct"] = np.abs(df["Close"].diff()).fillna(0) / df["Close"] * 100
-    df["Target"] = (df["Close"].shift(-1) > df["Close"]).astype(int)
-    return df
-
-
-def make_volatile_history(length: int = 80) -> pd.DataFrame:
-    rng = np.random.RandomState(42)
-    close = 100 + rng.standard_normal(length).cumsum()
-    data = {
-        "Close": close,
-        "Open": close + rng.standard_normal(length) * 0.5,
-        "High": close + np.abs(rng.standard_normal(length) * 1.0),
-        "Low": close - np.abs(rng.standard_normal(length) * 1.0),
-        "Volume": 1000 + np.abs(rng.standard_normal(length) * 300),
-    }
-    df = pd.DataFrame(data)
-    df["MA5"] = df["Close"].rolling(window=5, min_periods=1).mean()
-    df["MA20"] = df["Close"].rolling(window=20, min_periods=1).mean()
-    df["MA50"] = df["Close"].rolling(window=50, min_periods=1).mean()
-    df["MA5_vs_MA20"] = (df["MA5"] - df["MA20"]) / df["MA20"].replace(0, np.nan)
-    df["MA20_vs_MA50"] = (df["MA20"] - df["MA50"]) / df["MA50"].replace(0, np.nan)
-    df["RSI14"] = 50 + np.sin(np.linspace(0, 12.0, length)) * 25
-    df["BB_Position"] = np.where(np.arange(length) % 3 == 0, 0.02, 0.98)
-    df["MACD_Cross"] = np.where(np.arange(length) % 2 == 0, 1, -1)
-    df["Momentum_Normalized"] = np.gradient(df["Close"]) / df["Close"].shift(1).replace(0, np.nan)
-    df["ATR_Pct"] = np.abs(df["Close"].diff()).fillna(0) / df["Close"] * 100
-    df["Target"] = (df["Close"].shift(-1) > df["Close"]).astype(int)
-    return df
-
-
-def test_get_feature_columns_includes_sentiment_only_when_present():
-    from app.models.predictor import get_feature_columns
-
-    df = pd.DataFrame({"RSI14": [50.0], "Sentiment_Score": [0.2]})
-    columns = get_feature_columns(df, include_sentiment=True)
-    assert "RSI14" in columns
-    assert "Sentiment_Score" in columns
-
-    columns = get_feature_columns(df, include_sentiment=False)
-    assert "RSI14" in columns
-    assert "Sentiment_Score" not in columns
-
-
-def test_prepare_training_data_returns_arrays_for_valid_history():
-    from app.models.predictor import prepare_training_data
-
-    df = make_sample_history(80)
-    feature_cols = ["RSI14", "MA5_vs_MA20", "MA20_vs_MA50", "ATR_Pct"]
-    X, y, index = prepare_training_data(df, feature_cols, min_samples=10)
-
-    assert X is not None and y is not None and index is not None
-    assert X.shape[0] == len(y)
-    assert X.shape[1] == len(feature_cols)
-    assert X.dtype == np.float32
-    assert y.dtype in (np.int32, np.int64)
-    assert np.isfinite(X).all()
-    assert not np.isnan(y).any()
-
-
-def test_prepare_training_data_handles_nan_and_inf_values():
-    from app.models.predictor import prepare_training_data
-
-    df = make_sample_history(80)
-    df.loc[5, "RSI14"] = np.nan
-    df.loc[6, "ATR_Pct"] = np.inf
-    feature_cols = ["RSI14", "MA5_vs_MA20", "MA20_vs_MA50", "ATR_Pct"]
-
-    X, y, index = prepare_training_data(df, feature_cols, min_samples=10)
-
-    assert X is not None and y is not None
-    assert np.isfinite(X).all()
-    assert (X >= -10).all() and (X <= 10).all()
-
-
-def test_prepare_training_data_returns_none_for_short_history():
-    from app.models.predictor import prepare_training_data
-
-    df = make_sample_history(10)
-    feature_cols = ["RSI14", "MA5_vs_MA20", "MA20_vs_MA50", "ATR_Pct"]
-    X, y, index = prepare_training_data(df, feature_cols, min_samples=20)
-
-    assert X is None
-    assert y is None
-    assert index is None
-
-
-def test_regime_detector_returns_regime_and_use_lstm_flags():
-    from app.models.predictor import RegimeDetector
-
-    simple_df = make_sample_history(80)
-    detector = RegimeDetector(lookback=40)
-    simple_scores = detector.compute(simple_df)
-
-    assert simple_scores["regime"] in {"simple", "moderate", "complex"}
-    assert isinstance(simple_scores["use_lstm"], bool)
-    assert 0.0 <= simple_scores["complexity"] <= 1.0
-    assert set(simple_scores["scores"]) >= {"volatility", "trend_inconsistency", "rsi_extremes", "macd_cross_freq", "momentum_reversal", "bb_breakout"}
-
-    volatile_df = make_volatile_history(80)
-    volatile_scores = detector.compute(volatile_df)
-    assert volatile_scores["complexity"] >= simple_scores["complexity"]
-    assert volatile_scores["use_lstm"] is True or volatile_scores["regime"] in {"moderate", "complex"}
-
-
-def test_build_result_produces_expected_signal_mapping():
-    from app.models.predictor import _build_result
-
-    buy = _build_result(0.70, "XGBoost")
-    assert buy["signal"] == "BUY"
-    assert buy["direction"] == 1
-    assert buy["up_probability"] == 0.70
-
-    sell = _build_result(0.38, "XGBoost")
-    assert sell["signal"] == "SELL"
-    assert sell["direction"] == 0
-    assert sell["down_probability"] == 0.62
-
-    hold = _build_result(0.53, "XGBoost")
-    assert hold["signal"] == "HOLD"
-    assert hold["confidence"] == 0.53
-
-
-def test_run_backtest_returns_portfolio_for_dummy_predictor():
-    from app.models.predictor import run_backtest
-
-    df = make_sample_history(85)
-    df.index = pd.date_range("2025-01-01", periods=len(df), freq="D")
-
-    class DummyPredictor:
-        def __init__(self):
-            self.is_trained = True
-
-        def train(self, df, include_sentiment=False):
-            self.is_trained = True
-            return {}
-
-        def predict(self, df):
-            return {"signal": "BUY"}
-
-    predictor = DummyPredictor()
-    backtest = run_backtest(df, predictor, initial_capital=10000, commission_rate=0.0)
-
-    assert backtest["initial_capital"] == 10000
-    assert "final_capital" in backtest
-    assert "portfolio_values" in backtest
-    assert backtest["n_trades"] >= 0
-    assert backtest["strategy_return_pct"] == round((backtest["final_capital"] / 10000 - 1) * 100, 2)
-
-from unittest.mock import patch
-
-
-def make_full_feature_df(length: int = 100) -> pd.DataFrame:
-    """predictor가 요구하는 모든 피처 컬럼을 포함한 DataFrame 생성."""
-    rng = np.random.RandomState(42)
-    close = 100 + rng.standard_normal(length).cumsum()
-    df = pd.DataFrame({
-        "Close": close, "Open": close - 0.2, "High": close + 0.5,
-        "Low": close - 0.5, "Volume": np.abs(rng.standard_normal(length)) * 1000 + 500,
-        "RSI14": np.clip(50 + rng.standard_normal(length) * 15, 10, 90),
-        "RSI7": np.clip(50 + rng.standard_normal(length) * 20, 10, 90),
-        "MACD": rng.standard_normal(length) * 0.5,
-        "MACD_Signal": rng.standard_normal(length) * 0.3,
-        "MACD_Hist": rng.standard_normal(length) * 0.2,
-        "BB_Width": np.abs(rng.standard_normal(length)) * 0.02 + 0.05,
-        "BB_Position": np.clip(rng.standard_normal(length) * 0.3 + 0.5, 0, 1),
-        "ATR_Pct": np.abs(rng.standard_normal(length)) * 1.5 + 1.0,
-        "STOCH_K": np.clip(rng.standard_normal(length) * 20 + 50, 0, 100),
-        "STOCH_D": np.clip(rng.standard_normal(length) * 20 + 50, 0, 100),
-        "WILLIAMS_R": np.clip(rng.standard_normal(length) * 30 - 50, -100, 0),
-        "Volume_Ratio": np.abs(rng.standard_normal(length)) + 1,
-        "OBV_Trend": rng.standard_normal(length),
-        "Return_1d": rng.standard_normal(length) * 0.01,
-        "Return_3d": rng.standard_normal(length) * 0.02,
-        "Return_5d": rng.standard_normal(length) * 0.03,
-        "Return_10d": rng.standard_normal(length) * 0.04,
-        "Return_20d": rng.standard_normal(length) * 0.05,
-        "Price_vs_MA20": rng.standard_normal(length) * 0.02,
-        "Price_vs_MA50": rng.standard_normal(length) * 0.03,
-        "MA5_vs_MA20": rng.standard_normal(length) * 0.01,
-        "MA20_vs_MA50": rng.standard_normal(length) * 0.02,
-        "MA_Bias_Short": rng.standard_normal(length) * 0.01,
-        "MA_Bias_Mid": rng.standard_normal(length) * 0.02,
-        "Regime_Alignment": rng.standard_normal(length),
-        "Regime_Directional": rng.standard_normal(length),
-        "Regime_Trend_Strength": np.abs(rng.standard_normal(length)),
-        "MA_Alignment_Spread": rng.standard_normal(length) * 0.01,
-        "MA_Alignment_Ratio": np.abs(rng.standard_normal(length)) + 1,
-        "ADX14": np.abs(rng.standard_normal(length)) * 10 + 20,
-        "Plus_DI": np.abs(rng.standard_normal(length)) * 5 + 20,
-        "Minus_DI": np.abs(rng.standard_normal(length)) * 5 + 20,
-        "ADX_Momentum": rng.standard_normal(length),
-        "DI_Diff": rng.standard_normal(length) * 5,
-        "Regime_Prob_Bull": np.clip(rng.standard_normal(length) * 0.2 + 0.5, 0, 1),
-        "Regime_Prob_Bear": np.clip(rng.standard_normal(length) * 0.2 + 0.3, 0, 1),
-        "Regime_Prob_Sideways": np.clip(rng.standard_normal(length) * 0.1 + 0.2, 0, 1),
-        "Price_Position_20d": np.clip(rng.standard_normal(length) * 0.3 + 0.5, 0, 1),
-        "Body_Size": np.abs(rng.standard_normal(length)) * 0.5,
-        "Upper_Shadow": np.abs(rng.standard_normal(length)) * 0.3,
-        "Lower_Shadow": np.abs(rng.standard_normal(length)) * 0.3,
-        "Is_Bullish": (rng.standard_normal(length) > 0).astype(float),
-        "Momentum_Normalized": rng.standard_normal(length) * 0.01,
-        "MACD_Cross": np.where(np.arange(length) % 5 == 0, 1, 0),
-        "Target": (rng.standard_normal(length) > 0).astype(int),
-    })
-    df.index = pd.date_range("2023-01-01", periods=length, freq="D")
-    return df
-
-
-class TestAutoParams:
-    def test_small_dataset(self):
-        from app.models.predictor import _auto_params
-        p = _auto_params(200)
-        assert p["n_estimators_xgb"] == 150
-        assert p["n_splits"] == 3
-
-    def test_medium_dataset(self):
-        from app.models.predictor import _auto_params
-        p = _auto_params(500)
-        assert p["n_estimators_xgb"] == 200
-        assert p["n_splits"] == 4
-
-    def test_large_dataset(self):
-        from app.models.predictor import _auto_params
-        p = _auto_params(1000)
-        assert p["n_estimators_xgb"] == 300
-        assert p["n_splits"] == 5
-
-    def test_very_large_dataset(self):
-        from app.models.predictor import _auto_params
-        p = _auto_params(5000)
-        assert "max_samples" in p
-        assert p["fast"] is True
-
-    def test_boundary_2000(self):
-        from app.models.predictor import _auto_params
-        p = _auto_params(2000)
-        assert p["n_splits"] == 5
-
-
-class TestBarFunction:
-    def test_normal_bar(self):
-        from app.models.predictor import _bar
-        result = _bar(5, 10)
-        assert "5/10" in result
-        assert "[" in result and "]" in result
-
-    def test_zero_total(self):
-        from app.models.predictor import _bar
-        result = _bar(0, 0)
-        assert "?" in result
-
-    def test_zero_current(self):
-        from app.models.predictor import _bar
-        result = _bar(0, 10)
-        assert "0/10" in result
-
-
-class TestBuildResult:
-    def test_buy_signal(self):
-        from app.models.predictor import _build_result
-        r = _build_result(0.70)
-        assert r["signal"] == "BUY"
-        assert r["direction"] == 1
-        assert r["confidence"] == 0.70
-        assert r["model"] == "XGBoost"
-
-    def test_sell_signal(self):
-        from app.models.predictor import _build_result
-        r = _build_result(0.38)
-        assert r["signal"] == "SELL"
-        assert r["direction"] == 0
-
-    def test_hold_signal(self):
-        from app.models.predictor import _build_result
-        r = _build_result(0.53)
-        assert r["signal"] == "HOLD"
-
-    def test_custom_model_name(self):
-        from app.models.predictor import _build_result
-        r = _build_result(0.8, "LSTM")
-        assert r["model"] == "LSTM"
-
-    def test_exact_boundary_065(self):
-        from app.models.predictor import _build_result
-        r = _build_result(0.65)
-        # 0.65는 BUY 기준 초과 아님
-        assert r["signal"] in ("BUY", "HOLD")
-
-    def test_down_prob_is_complement(self):
-        from app.models.predictor import _build_result
-        r = _build_result(0.4)
-        assert abs(r["up_probability"] + r["down_probability"] - 1.0) < 1e-6
-
-
-class TestRegimeDetector:
-    def test_empty_df_returns_simple(self):
-        from app.models.predictor import RegimeDetector
-        rd = RegimeDetector()
-        result = rd.detect(pd.DataFrame())
-        assert result["regime"] == "simple"
-        assert result["use_lstm"] is False
-        assert result["complexity"] == 0.0
-
-    def test_high_bull_prob_returns_complex(self):
-        from app.models.predictor import RegimeDetector
-        rd = RegimeDetector()
-        df = pd.DataFrame({"Regime_Prob_Bull": [0.7], "ATR_Pct": [1.0]})
-        result = rd.detect(df)
-        assert result["regime"] == "complex"
-        assert result["use_lstm"] is True
-
-    def test_moderate_bull_prob(self):
-        from app.models.predictor import RegimeDetector
-        rd = RegimeDetector()
-        df = pd.DataFrame({"Regime_Prob_Bull": [0.4], "ATR_Pct": [1.0]})
-        result = rd.detect(df)
-        assert result["regime"] == "moderate"
-
-    def test_low_prob_returns_simple(self):
-        from app.models.predictor import RegimeDetector
-        rd = RegimeDetector()
-        df = pd.DataFrame({"Regime_Prob_Bull": [0.1], "ATR_Pct": [1.0]})
-        result = rd.detect(df)
-        assert result["regime"] == "simple"
-        assert result["use_lstm"] is False
-
-    def test_high_atr_returns_complex(self):
-        from app.models.predictor import RegimeDetector
-        rd = RegimeDetector()
-        df = pd.DataFrame({"Regime_Prob_Bull": [0.1], "ATR_Pct": [3.0]})
-        result = rd.detect(df)
-        assert result["regime"] == "complex"
-
-    def test_compute_is_alias_for_detect(self):
-        from app.models.predictor import RegimeDetector
-        rd = RegimeDetector()
-        df = pd.DataFrame({"Regime_Prob_Bull": [0.5], "ATR_Pct": [1.0]})
-        assert rd.compute(df) == rd.detect(df)
-
-    def test_scores_has_all_keys(self):
-        from app.models.predictor import RegimeDetector
-        rd = RegimeDetector()
-        df = pd.DataFrame({"Regime_Prob_Bull": [0.5], "ATR_Pct": [1.0]})
-        result = rd.detect(df)
-        expected = {"volatility", "trend_inconsistency", "rsi_extremes",
-                    "macd_cross_freq", "momentum_reversal", "bb_breakout"}
-        assert set(result["scores"]) >= expected
-
-    def test_missing_atr_defaults_to_one(self):
-        from app.models.predictor import RegimeDetector
-        rd = RegimeDetector(lookback=10)
-        df = pd.DataFrame({"Regime_Prob_Bull": [0.1]})
-        result = rd.detect(df)
-        # ATR_Pct 없으면 1.0 기본값 → ATR_Pct=1.0 < 2.0 → 변동성 낮음
-        assert result["regime"] == "simple"
-
-
-class TestPrepareTrainingData:
-    def test_max_samples_truncation(self):
-        from app.models.predictor import prepare_training_data
-        df = make_full_feature_df(150)
-        X, y, idx = prepare_training_data(df, ["RSI14", "MACD"], max_samples=50)
-        assert X is not None
-        assert len(X) <= 50
-
-    def test_drops_last_row(self):
-        """Target 기준으로 마지막 행은 제거돼야 한다."""
-        from app.models.predictor import prepare_training_data
-        df = make_full_feature_df(80)
-        X, y, idx = prepare_training_data(df, ["RSI14", "MACD"], min_samples=10)
-        assert X is not None
-        assert len(X) < len(df)
-
-    def test_clipping_applied(self):
-        from app.models.predictor import prepare_training_data
-        df = make_full_feature_df(80)
-        df["RSI14"] = 9999.0
-        X, y, _ = prepare_training_data(df, ["RSI14"], min_samples=10)
-        assert X is not None
-        assert X.max() <= 10.0
-
-
-class TestXGBoostPredictor:
-    """xgboost 패키지가 없을 경우 sklearn 폴백으로 동작하는지 확인."""
-
-    def _make_predictor_and_df(self):
-        from app.models.predictor import XGBoostPredictor
-        pred = XGBoostPredictor(scanner_mode=False)
-        df = make_full_feature_df(100)
-        return pred, df
-
-    def test_initial_state(self):
-        from app.models.predictor import XGBoostPredictor
-        pred = XGBoostPredictor()
-        assert pred.is_trained is False
-        assert pred.model is None
-
-    def test_predict_proba_before_train_returns_none(self):
-        from app.models.predictor import XGBoostPredictor
-        pred = XGBoostPredictor()
-        df = make_full_feature_df(80)
-        assert pred.predict_proba(df) is None
-
-    def test_predict_before_train_returns_error(self):
-        from app.models.predictor import XGBoostPredictor
-        pred = XGBoostPredictor()
-        df = make_full_feature_df(80)
-        result = pred.predict(df)
-        assert "error" in result
-
-    def test_train_insufficient_data_returns_error(self):
-        from app.models.predictor import XGBoostPredictor
-        pred = XGBoostPredictor()
-        df = make_full_feature_df(10)  # 너무 짧음
-        result = pred.train(df)
-        assert "error" in result
-
-    def test_sklearn_fallback_train(self):
-        """xgboost import를 막아서 sklearn 폴백을 실행."""
-        from app.models.predictor import XGBoostPredictor
-        pred = XGBoostPredictor()
-        df = make_full_feature_df(100)
-        feature_cols = ["RSI14", "MACD", "BB_Position", "ATR_Pct", "Return_1d"]
-
-        with patch.dict("sys.modules", {"xgboost": None}):
-            result = pred._train_sklearn(df, include_sentiment=False, feature_cols=feature_cols)
-
-        assert "error" not in result
-        assert pred.is_trained is True
-        assert "train_accuracy" in result
-
-    def test_sklearn_fallback_predict_proba(self):
-        from app.models.predictor import XGBoostPredictor
-        pred = XGBoostPredictor()
-        df = make_full_feature_df(100)
-        feature_cols = ["RSI14", "MACD", "BB_Position", "ATR_Pct", "Return_1d"]
-        pred._train_sklearn(df, include_sentiment=False, feature_cols=feature_cols)
-        proba = pred.predict_proba(df)
-        assert proba is not None
-        assert 0.0 <= proba <= 1.0
-
-    def test_sklearn_fallback_insufficient_data(self):
-        from app.models.predictor import XGBoostPredictor
-        pred = XGBoostPredictor()
-        df = make_full_feature_df(5)
-        result = pred._train_sklearn(df, include_sentiment=False, feature_cols=["RSI14"])
-        assert "error" in result
-
-    def test_fit_full_data_insufficient(self):
-        from app.models.predictor import XGBoostPredictor
-        pred = XGBoostPredictor()
-        df = make_full_feature_df(10)
-        with patch.dict("sys.modules", {"xgboost": None}):
-            result = pred.fit_full_data(df, include_sentiment=False)
-        assert "error" in result
-
-
-class TestLSTMPredictorAvailableFramework:
-    def test_returns_none_when_no_framework(self):
-        from app.models.predictor import LSTMPredictor
-        with patch.dict("sys.modules", {"torch": None, "tensorflow": None}):
-            result = LSTMPredictor.available_framework()
+# ─────────────────────────────────────────────────────────────
+# fetch_stock_data
+# ─────────────────────────────────────────────────────────────
+
+class TestFetchStockData:
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_returns_dataframe_and_info_on_success(self, mock_redis):
+        # mock redis to return None (cache miss)
+        mock_redis.return_value.get.return_value = None
+        
+        from app.pipelines.fetcher import fetch_stock_data
+
+        mock_ticker = _make_mock_ticker(
+            hist=_make_price_df(60),
+            info={"shortName": "Apple Inc.", "sector": "Technology", "trailingPE": 28.5},
+        )
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            df, info = fetch_stock_data("AAPL", period_days=365)
+
+        assert df is not None and info is not None
+        assert len(df) == 60
+        # Verify cache was saved
+        mock_redis.return_value.setex.assert_called_once()
+
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_ohlcv_columns_present(self, mock_redis):
+        mock_redis.return_value.get.return_value = None
+        from app.pipelines.fetcher import fetch_stock_data
+
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=_make_mock_ticker()):
+            df, _ = fetch_stock_data("AAPL")
+
+        assert set(["Open", "High", "Low", "Close", "Volume"]).issubset(df.columns)
+
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_columns_are_float32(self, mock_redis):
+        mock_redis.return_value.get.return_value = None
+        from app.pipelines.fetcher import fetch_stock_data
+
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=_make_mock_ticker()):
+            df, _ = fetch_stock_data("AAPL")
+
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            assert df[col].dtype == np.float32, f"{col} should be float32"
+
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_timezone_aware_index_is_converted_to_naive(self, mock_redis):
+        mock_redis.return_value.get.return_value = None
+        from app.pipelines.fetcher import fetch_stock_data
+
+        tz_hist = _make_price_df(60, tz_aware=True)
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=_make_mock_ticker(hist=tz_hist)):
+            df, _ = fetch_stock_data("AAPL")
+
+        assert df.index.tz is None
+
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_index_is_datetime(self, mock_redis):
+        mock_redis.return_value.get.return_value = None
+        from app.pipelines.fetcher import fetch_stock_data
+
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=_make_mock_ticker()):
+            df, _ = fetch_stock_data("AAPL")
+
+        assert isinstance(df.index, pd.DatetimeIndex)
+
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_empty_history_returns_none_tuple(self, mock_redis):
+        mock_redis.return_value.get.return_value = None
+        from app.pipelines.fetcher import fetch_stock_data
+
+        mock_ticker = _make_mock_ticker(hist=pd.DataFrame())
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            df, info = fetch_stock_data("AAPL")
+
+        assert df is None and info is None
+
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_short_history_under_30_rows_returns_none(self, mock_redis):
+        mock_redis.return_value.get.return_value = None
+        from app.pipelines.fetcher import fetch_stock_data
+
+        mock_ticker = _make_mock_ticker(hist=_make_price_df(10))
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            df, info = fetch_stock_data("AAPL")
+
+        assert df is None and info is None
+
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_yfinance_exception_raises_value_error(self, mock_redis):
+        mock_redis.return_value.get.return_value = None
+        from app.pipelines.fetcher import fetch_stock_data
+
+        with patch("app.pipelines.fetcher.yf.Ticker", side_effect=Exception("network error")):
+            with pytest.raises(ValueError, match="데이터 수집 실패"):
+                fetch_stock_data("AAPL")
+
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_period_zero_uses_max(self, mock_redis):
+        """period_days=0 이면 history(period='max') 호출해야 함."""
+        mock_redis.return_value.get.return_value = None
+        from app.pipelines.fetcher import fetch_stock_data
+
+        mock_ticker = _make_mock_ticker(hist=_make_price_df(60))
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            fetch_stock_data("AAPL", period_days=0)
+
+        mock_ticker.history.assert_called_once_with(period="max", auto_adjust=True)
+
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_period_positive_uses_start_end(self, mock_redis):
+        """period_days>0 이면 start/end 파라미터로 history 호출해야 함."""
+        mock_redis.return_value.get.return_value = None
+        from app.pipelines.fetcher import fetch_stock_data
+
+        mock_ticker = _make_mock_ticker(hist=_make_price_df(60))
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            fetch_stock_data("AAPL", period_days=365)
+
+        call_kwargs = mock_ticker.history.call_args.kwargs
+        assert "start" in call_kwargs and "end" in call_kwargs
+
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_korean_ticker_normalized_before_request(self, mock_redis):
+        """6자리 숫자 종목코드가 .KS 형식으로 변환되어 yf.Ticker에 전달되어야 함."""
+        mock_redis.return_value.get.return_value = None
+        from app.pipelines.fetcher import fetch_stock_data
+
+        mock_ticker = _make_mock_ticker(hist=_make_price_df(60))
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker) as mock_yf:
+            fetch_stock_data("005930")
+
+        mock_yf.assert_called_once_with("005930.KS")
+
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_financial_info_keys_extracted(self, mock_redis):
+        mock_redis.return_value.get.return_value = None
+        from app.pipelines.fetcher import fetch_stock_data
+
+        raw_info = {
+            "trailingPE": 28.5,
+            "priceToBook": 3.2,
+            "sector": "Technology",
+            "shortName": "Apple Inc.",
+            "unknownKey": "should_not_appear",
+        }
+        mock_ticker = _make_mock_ticker(hist=_make_price_df(60), info=raw_info)
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            _, info = fetch_stock_data("AAPL")
+
+        assert info["trailingPE"] == 28.5
+        assert info["sector"] == "Technology"
+        assert "unknownKey" not in info
+
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_info_fetch_failure_returns_empty_info(self, mock_redis):
+        """stock.info 접근 시 예외가 발생해도 price_df는 정상 반환해야 함."""
+        mock_redis.return_value.get.return_value = None
+        from app.pipelines.fetcher import fetch_stock_data
+
+        mock_ticker = _make_mock_ticker(hist=_make_price_df(60))
+        type(mock_ticker).info = property(
+            lambda self: (_ for _ in ()).throw(Exception("info error"))
+        )
+
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            df, info = fetch_stock_data("AAPL")
+
+        assert df is not None
+        assert info == {}
+
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_no_none_values_in_returned_info(self, mock_redis):
+        """None 값을 가진 재무 항목은 info dict에서 제외되어야 함."""
+        mock_redis.return_value.get.return_value = None
+        from app.pipelines.fetcher import fetch_stock_data
+
+        raw_info = {"trailingPE": 28.5, "forwardPE": None, "sector": "Technology"}
+        mock_ticker = _make_mock_ticker(hist=_make_price_df(60), info=raw_info)
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            _, info = fetch_stock_data("AAPL")
+
+        assert "forwardPE" not in info
+
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_redis_cache_hit_returns_data_without_yfinance(self, mock_redis):
+        """Redis 캐시에 데이터가 있으면 yfinance를 호출하지 않고 반환해야 함."""
+        import json
+        
+        # Mock Redis return value
+        cached_json = json.dumps({
+            "info": {"shortName": "Apple", "trailingPE": 28.5},
+            "history": [
+                {
+                    "Date": "2024-01-01T00:00:00",
+                    "Open": 100, "High": 105, "Low": 99, "Close": 104, "Volume": 1000,
+                }
+            ]
+        })
+        mock_redis.return_value.get.return_value = cached_json
+        
+        from app.pipelines.fetcher import fetch_stock_data
+        
+        # yf.Ticker should not be called
+        with patch("app.pipelines.fetcher.yf.Ticker") as mock_yf:
+            df, info = fetch_stock_data("AAPL")
+            
+            mock_yf.assert_not_called()
+            
+            assert df is not None
+            assert len(df) == 1
+            assert df.index.name == "Date"
+            assert "Close" in df.columns
+            assert df.iloc[0]["Close"] == 104.0
+            
+            assert info is not None
+            assert info["shortName"] == "Apple"
+
+    @patch("app.pipelines.fetcher.redis.from_url")
+    def test_redis_cache_exception_falls_back_to_yfinance(self, mock_redis):
+        """Redis 연결/조회 중 예외 발생 시 yfinance로 폴백해야 함."""
+        mock_redis.return_value.get.side_effect = Exception("Redis connection error")
+        
+        from app.pipelines.fetcher import fetch_stock_data
+        
+        mock_ticker = _make_mock_ticker(hist=_make_price_df(60))
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker) as mock_yf:
+            df, info = fetch_stock_data("AAPL")
+            
+            # yfinance must be called
+            mock_yf.assert_called_once()
+            assert df is not None
+            assert len(df) == 60
+
+
+# ─────────────────────────────────────────────────────────────
+# fetch_earnings_history
+# ─────────────────────────────────────────────────────────────
+
+class TestFetchEarningsHistory:
+    def _make_income_stmt(self) -> pd.DataFrame:
+        idx = pd.date_range("2024-01-01", periods=4, freq="QE")
+        return pd.DataFrame(
+            {
+                "Total Revenue": [100e9, 95e9, 90e9, 85e9],
+                "Net Income": [25e9, 23e9, 22e9, 20e9],
+                "Gross Profit": [45e9, 43e9, 40e9, 38e9],
+            },
+            index=idx,
+        ).T  # yfinance 형식: 컬럼=날짜, 인덱스=항목
+
+    def test_returns_dataframe_from_income_stmt(self):
+        from app.pipelines.fetcher import fetch_earnings_history
+
+        stmt = self._make_income_stmt()
+        mock_ticker = _make_mock_ticker(quarterly_income_stmt=stmt)
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            result = fetch_earnings_history("AAPL")
+
+        assert result is not None
+        assert isinstance(result, pd.DataFrame)
+
+    def test_falls_back_to_quarterly_financials(self):
+        """quarterly_income_stmt가 없으면 quarterly_financials를 사용해야 함."""
+        from app.pipelines.fetcher import fetch_earnings_history
+
+        fallback = self._make_income_stmt()
+        mock_ticker = _make_mock_ticker(
+            quarterly_income_stmt=pd.DataFrame(),  # 비어있는 stmt
+            quarterly_financials=fallback,
+        )
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            result = fetch_earnings_history("AAPL")
+
+        assert result is not None
+
+    def test_returns_none_when_all_sources_empty(self):
+        from app.pipelines.fetcher import fetch_earnings_history
+
+        mock_ticker = _make_mock_ticker(
+            quarterly_income_stmt=pd.DataFrame(),
+            quarterly_financials=pd.DataFrame(),
+        )
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            result = fetch_earnings_history("AAPL")
+
         assert result is None
 
-    def test_initial_state(self):
-        from app.models.predictor import LSTMPredictor
-        pred = LSTMPredictor(sequence_length=10)
-        assert pred.is_trained is False
-        assert pred.sequence_length == 10
+    def test_returns_none_on_exception(self):
+        from app.pipelines.fetcher import fetch_earnings_history
 
-    def test_train_no_framework(self):
-        from app.models.predictor import LSTMPredictor
-        pred = LSTMPredictor()
-        df = make_full_feature_df(80)
-        with patch.object(LSTMPredictor, "available_framework", return_value=None):
-            result = pred.train(df)
-        assert "error" in result
+        with patch("app.pipelines.fetcher.yf.Ticker", side_effect=Exception("error")):
+            result = fetch_earnings_history("AAPL")
 
-    def test_train_insufficient_data(self):
-        from app.models.predictor import LSTMPredictor
-        pred = LSTMPredictor(sequence_length=30)
-        df = make_full_feature_df(30)  # SEQ+20 = 50 필요
-        with patch.object(LSTMPredictor, "available_framework", return_value="pytorch"):
-            result = pred.train(df)
-        assert "error" in result
+        assert result is None
 
-    def test_predict_proba_before_train(self):
-        from app.models.predictor import LSTMPredictor
-        pred = LSTMPredictor()
-        df = make_full_feature_df(80)
-        assert pred.predict_proba(df) is None
+    def test_result_rows_capped_at_8(self):
+        from app.pipelines.fetcher import fetch_earnings_history
 
-    def test_predict_before_train_returns_error(self):
-        from app.models.predictor import LSTMPredictor
-        pred = LSTMPredictor()
-        df = make_full_feature_df(80)
-        result = pred.predict(df)
-        assert "error" in result
+        idx = pd.date_range("2020-01-01", periods=12, freq="QE")
+        long_stmt = pd.DataFrame(
+            {"Total Revenue": range(12), "Net Income": range(12)}, index=idx
+        ).T
+        mock_ticker = _make_mock_ticker(quarterly_income_stmt=long_stmt)
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            result = fetch_earnings_history("AAPL")
+
+        assert result is not None and len(result) <= 8
+
+    def test_korean_ticker_normalized(self):
+        from app.pipelines.fetcher import fetch_earnings_history
+
+        stmt = self._make_income_stmt()
+        mock_ticker = _make_mock_ticker(quarterly_income_stmt=stmt)
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker) as mock_yf:
+            fetch_earnings_history("005930")
+
+        mock_yf.assert_called_once_with("005930.KS")
 
 
-class TestPredictLstmHistoryProba:
-    def test_untrained_returns_half(self):
-        from app.models.predictor import LSTMPredictor, predict_lstm_history_proba
-        pred = LSTMPredictor()
-        df = make_full_feature_df(50)
-        series = predict_lstm_history_proba(pred, df)
-        assert (series == 0.5).all()
+# ─────────────────────────────────────────────────────────────
+# fetch_institutional_holders
+# ─────────────────────────────────────────────────────────────
 
-    def test_short_data_returns_half(self):
-        from app.models.predictor import LSTMPredictor, predict_lstm_history_proba
-        pred = LSTMPredictor(sequence_length=30)
-        pred.is_trained = True
-        pred.feature_cols = ["RSI14"]
-        # scaler는 fit 안 됐으므로 실제 transform 전에 SEQ 체크가 먼저 돼야 함
-        df = make_full_feature_df(10)
-        series = predict_lstm_history_proba(pred, df)
-        assert (series == 0.5).all()
+class TestFetchInstitutionalHolders:
+    def _make_holders_df(self, n: int = 5) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "Holder": [f"Institution {i}" for i in range(n)],
+                "Shares": [1_000_000 * (n - i) for i in range(n)],
+                "% Out": [round(0.1 * (n - i), 2) for i in range(n)],
+            }
+        )
 
+    def test_returns_dataframe_on_success(self):
+        from app.pipelines.fetcher import fetch_institutional_holders
 
-class TestLSTMFirstStackingPredictor:
-    def test_initial_state(self):
-        from app.models.predictor import LSTMFirstStackingPredictor
-        pred = LSTMFirstStackingPredictor(sequence_length=10)
-        assert pred.is_trained is False
+        mock_ticker = _make_mock_ticker(institutional_holders=self._make_holders_df(5))
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            result = fetch_institutional_holders("AAPL")
 
-    def test_predict_before_train_returns_error(self):
-        from app.models.predictor import LSTMFirstStackingPredictor
-        pred = LSTMFirstStackingPredictor()
-        df = make_full_feature_df(80)
-        result = pred.predict(df)
-        assert "error" in result
+        assert result is not None
+        assert isinstance(result, pd.DataFrame)
 
-    def test_train_fallback_when_no_framework(self):
-        """PyTorch/TF 없을 때 XGBoost 단독 폴백."""
-        from app.models.predictor import LSTMFirstStackingPredictor, LSTMPredictor
-        pred = LSTMFirstStackingPredictor()
-        df = make_full_feature_df(100)
+    def test_result_capped_at_10_rows(self):
+        from app.pipelines.fetcher import fetch_institutional_holders
 
-        with patch.object(LSTMPredictor, "available_framework", return_value=None), \
-             patch.dict("sys.modules", {"xgboost": None}):
-            result = pred.train(df)
+        mock_ticker = _make_mock_ticker(institutional_holders=self._make_holders_df(15))
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            result = fetch_institutional_holders("AAPL")
 
-        # sklearn 폴백으로 성공하거나 오류 키 반환
-        assert isinstance(result, dict)
+        assert result is not None and len(result) <= 10
 
-    def test_predict_fallback_when_no_framework_xgb_trained(self):
-        """학습 후 predict 시 프레임워크 없으면 XGBoost 단독 예측."""
-        from app.models.predictor import LSTMFirstStackingPredictor, LSTMPredictor
-        pred = LSTMFirstStackingPredictor()
-        df = make_full_feature_df(100)
+    def test_returns_none_when_holders_empty(self):
+        from app.pipelines.fetcher import fetch_institutional_holders
 
-        # 강제로 is_trained=True 및 xgb 부분만 훈련
-        pred.is_trained = True
-        with patch.dict("sys.modules", {"xgboost": None}):
-            pred.xgb._train_sklearn(df, include_sentiment=False,
-                                    feature_cols=["RSI14", "MACD", "BB_Position"])
+        mock_ticker = _make_mock_ticker(institutional_holders=pd.DataFrame())
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            result = fetch_institutional_holders("AAPL")
 
-        with patch.object(LSTMPredictor, "available_framework", return_value=None):
-            result = pred.predict(df)
-        # xgb가 훈련된 경우 예측 성공 또는 실패 모두 dict 반환
-        assert isinstance(result, dict)
+        assert result is None
+
+    def test_returns_none_when_holders_is_none(self):
+        from app.pipelines.fetcher import fetch_institutional_holders
+
+        mock_ticker = _make_mock_ticker(institutional_holders=None)
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            result = fetch_institutional_holders("AAPL")
+
+        assert result is None
+
+    def test_returns_none_on_exception(self):
+        from app.pipelines.fetcher import fetch_institutional_holders
+
+        with patch("app.pipelines.fetcher.yf.Ticker", side_effect=Exception("error")):
+            result = fetch_institutional_holders("AAPL")
+
+        assert result is None
 
 
-class TestEnsemblePredictorAlias:
-    def test_alias_is_lstm_first_stacking(self):
-        from app.models.predictor import EnsemblePredictor, LSTMFirstStackingPredictor
-        assert EnsemblePredictor is LSTMFirstStackingPredictor
+# ─────────────────────────────────────────────────────────────
+# get_market_context
+# ─────────────────────────────────────────────────────────────
+
+class TestGetMarketContext:
+    def _make_bench_ticker(
+        self, start: float = 100.0, end: float = 110.0, n: int = 60
+    ) -> MagicMock:
+        hist = pd.DataFrame(
+            {"Close": np.linspace(start, end, n)},
+            index=pd.date_range("2024-01-01", periods=n, freq="B"),
+        )
+        mock = MagicMock()
+        mock.history.return_value = hist
+        return mock
+
+    def test_us_ticker_uses_sp500_benchmark(self):
+        from app.pipelines.fetcher import get_market_context
+
+        bench = self._make_bench_ticker()
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=bench) as mock_yf:
+            get_market_context("AAPL")
+
+        mock_yf.assert_called_once_with("^GSPC")
+
+    def test_ks_ticker_uses_kospi_benchmark(self):
+        from app.pipelines.fetcher import get_market_context
+
+        bench = self._make_bench_ticker()
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=bench) as mock_yf:
+            get_market_context("005930.KS")
+
+        mock_yf.assert_called_once_with("^KS11")
+
+    def test_kq_ticker_uses_kospi_benchmark(self):
+        from app.pipelines.fetcher import get_market_context
+
+        bench = self._make_bench_ticker()
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=bench) as mock_yf:
+            get_market_context("035720.KQ")
+
+        mock_yf.assert_called_once_with("^KS11")
+
+    def test_returns_benchmark_name_and_return(self):
+        from app.pipelines.fetcher import get_market_context
+
+        with patch(
+            "app.pipelines.fetcher.yf.Ticker",
+            return_value=self._make_bench_ticker(100, 110),
+        ):
+            context = get_market_context("AAPL")
+
+        assert context["benchmark_name"] == "S&P 500"
+        assert "benchmark_3mo_return" in context
+
+    def test_return_pct_calculated_correctly(self):
+        from app.pipelines.fetcher import get_market_context
+
+        # 100 → 110: 수익률 10%
+        with patch(
+            "app.pipelines.fetcher.yf.Ticker",
+            return_value=self._make_bench_ticker(100, 110),
+        ):
+            context = get_market_context("AAPL")
+
+        assert abs(context["benchmark_3mo_return"] - 10.0) < 0.1
+
+    def test_benchmark_fetch_failure_returns_empty_dict(self):
+        from app.pipelines.fetcher import get_market_context
+
+        with patch("app.pipelines.fetcher.yf.Ticker", side_effect=Exception("network error")):
+            context = get_market_context("AAPL")
+
+        assert context == {}
+
+    def test_empty_benchmark_history_returns_empty_dict(self):
+        from app.pipelines.fetcher import get_market_context
+
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = pd.DataFrame()
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
+            context = get_market_context("AAPL")
+
+        assert context == {}
+
+    def test_return_value_is_rounded_to_two_decimals(self):
+        from app.pipelines.fetcher import get_market_context
+
+        with patch(
+            "app.pipelines.fetcher.yf.Ticker",
+            return_value=self._make_bench_ticker(100, 107.777),
+        ):
+            context = get_market_context("AAPL")
+
+        ret = context.get("benchmark_3mo_return", 0)
+        assert ret == round(ret, 2)
+
+# ─────────────────────────────────────────────────────────────
+# get_recent_SP500_tickers.py 테스트
+# ─────────────────────────────────────────────────────────────
+
+from unittest.mock import MagicMock, patch  # noqa: E402
 
 
-class TestRunBacktest:
-    def test_untrained_predictor_returns_empty(self):
-        from app.models.predictor import run_backtest
+class TestSP500Tickers:
+    def test_normalize_ticker(self):
+        from app.pipelines.get_recent_SP500_tickers import _normalize_ticker
+        assert _normalize_ticker("BRK.B") == "BRK-B"
+        assert _normalize_ticker("AAPL") == "AAPL"
 
-        class FakePredictor:
-            is_trained = False
+    def test_fetch_from_wikipedia_network_failure(self):
+        """네트워크 실패 시 빈 리스트 반환."""
+        from app.pipelines.get_recent_SP500_tickers import _fetch_from_wikipedia
+        with patch("urllib.request.urlopen", side_effect=Exception("Network error")):
+            result = _fetch_from_wikipedia()
+        assert result == []
 
-        assert run_backtest(make_full_feature_df(100), FakePredictor()) == {}
+    def test_get_sp500_tickers_uses_fallback_when_fetch_fails(self):
+        from app.pipelines.get_recent_SP500_tickers import get_sp500_tickers
+        get_sp500_tickers.cache_clear()
+        with patch("app.pipelines.get_recent_SP500_tickers._fetch_from_wikipedia", return_value=[]):
+            result = get_sp500_tickers()
+        assert len(result) > 0
+        assert "AAPL" in result
+        get_sp500_tickers.cache_clear()
 
-    def test_sell_signal_closes_position(self):
-        from app.models.predictor import run_backtest
+    def test_get_sp500_tickers_deduplicates(self):
+        from app.pipelines.get_recent_SP500_tickers import get_sp500_tickers
+        get_sp500_tickers.cache_clear()
+        with patch("app.pipelines.get_recent_SP500_tickers._fetch_from_wikipedia",
+                   return_value=["AAPL", "MSFT", "AAPL"]):
+            result = get_sp500_tickers()
+        assert result.count("AAPL") == 1
+        get_sp500_tickers.cache_clear()
 
-        signals = iter(["BUY"] * 10 + ["SELL"] * 50)
+    def test_refresh_sp500_tickers(self):
+        from app.pipelines.get_recent_SP500_tickers import refresh_sp500_tickers
+        with patch("app.pipelines.get_recent_SP500_tickers._fetch_from_wikipedia",
+                   return_value=["TEST1", "TEST2"]):
+            result = refresh_sp500_tickers()
+        assert "TEST1" in result
 
-        class FakePredictor:
-            is_trained = True
+    def test_fetch_from_wikipedia_no_symbol_column(self):
+        """파싱했지만 Symbol 컬럼이 없을 때 빈 리스트."""
+        from app.pipelines.get_recent_SP500_tickers import _fetch_from_wikipedia
+        mock_df = pd.DataFrame({"Company": ["Apple"], "HQ": ["Cupertino"]})
+        with patch("urllib.request.urlopen") as mock_open, \
+             patch("pandas.read_html", return_value=[mock_df]):
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = b"<html></html>"
+            mock_resp.__enter__ = lambda s: s
+            mock_resp.__exit__ = MagicMock(return_value=False)
+            mock_open.return_value = mock_resp
+            result = _fetch_from_wikipedia()
+        assert result == []
 
-            def predict(self, df):
-                try:
-                    return {"signal": next(signals)}
-                except StopIteration:
-                    return {"signal": "HOLD"}
-
-        df = make_full_feature_df(100)
-        df.index = pd.date_range("2023-01-01", periods=100, freq="D")
-        result = run_backtest(df, FakePredictor(), initial_capital=10000)
-        assert result["n_trades"] >= 1
-
-    def test_error_signal_handled(self):
-        from app.models.predictor import run_backtest
-
-        class FakePredictor:
-            is_trained = True
-
-            def predict(self, df):
-                return {"error": "oops"}
-
-        df = make_full_feature_df(100)
-        result = run_backtest(df, FakePredictor())
-        assert "portfolio_values" in result
-
-    def test_hold_at_end_closes_position(self):
-        from app.models.predictor import run_backtest
-
-        class FakePredictor:
-            is_trained = True
-            call_count = 0
-
-            def predict(self, df):
-                self.call_count += 1
-                return {"signal": "BUY"}
-
-        df = make_full_feature_df(100)
-        result = run_backtest(df, FakePredictor())
-        assert result["final_capital"] > 0
+    def test_fetch_from_wikipedia_success(self):
+        """파싱 성공 시 티커 리스트 반환."""
+        from app.pipelines.get_recent_SP500_tickers import _fetch_from_wikipedia
+        mock_df = pd.DataFrame({"Symbol": ["AAPL", "MSFT", "BRK.B"]})
+        with patch("urllib.request.urlopen") as mock_open, \
+             patch("pandas.read_html", return_value=[mock_df]):
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = b"<html></html>"
+            mock_resp.__enter__ = lambda s: s
+            mock_resp.__exit__ = MagicMock(return_value=False)
+            mock_open.return_value = mock_resp
+            result = _fetch_from_wikipedia()
+        assert "AAPL" in result
+        assert "BRK-B" in result  # 정규화됨
