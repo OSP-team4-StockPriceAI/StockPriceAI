@@ -6,9 +6,13 @@ Redis에 진행률 및 결과를 저장합니다.
 
 import json
 import logging
+import uuid
 from datetime import datetime
 from typing import Any, cast
+from zoneinfo import ZoneInfo
 
+import pandas as pd
+import pandas_market_calendars as mcal
 import redis
 
 from ..core.config import settings
@@ -18,6 +22,11 @@ log = logging.getLogger("stockai.tasks")
 
 PROGRESS_KEY_PREFIX = "scan:progress:"
 PROGRESS_TTL = 86400  # 24h
+
+# 자동 스캔 결과의 최신 job_id 를 저장하는 Redis 키
+LATEST_SCAN_KEY = "scan:latest:{trigger}"  # trigger = market_open | market_close
+
+ET = ZoneInfo("America/New_York")
 
 
 def _get_redis() -> redis.Redis:
@@ -42,6 +51,19 @@ def get_scan_progress(job_id: str) -> dict[str, Any] | None:
         pass
     return None
 
+
+def get_latest_scan_job_id(trigger: str) -> str | None:
+    """market_open / market_close 트리거의 최신 job_id 조회"""
+    try:
+        r = _get_redis()
+        return cast("str | None", r.get(LATEST_SCAN_KEY.format(trigger=trigger)))
+    except Exception:
+        return None
+
+
+# ─────────────────────────────────────────────────────────────
+# 핵심 스캔 태스크
+# ─────────────────────────────────────────────────────────────
 
 @celery_app.task(bind=True, name="scan_tasks.run_scan_job", max_retries=0)  # type: ignore[untyped-decorator]
 def run_scan_job(
@@ -175,6 +197,117 @@ def run_scan_job(
         raise
 
 
+# ─────────────────────────────────────────────────────────────
+# 스케줄 트리거 태스크 (Celery Beat → 이 태스크 → run_scan_job)
+# ─────────────────────────────────────────────────────────────
+
+@celery_app.task(name="scan_tasks.scheduled_market_scan", ignore_result=True)  # type: ignore[untyped-decorator]
+def scheduled_market_scan(
+    trigger: str = "market_open",
+    force_refresh: bool = True,
+    max_workers: int = 2,
+    period_days: int = 400,
+) -> None:
+    """
+    Celery Beat이 장 시작 +30분 / 장 마감 -30분에 자동 호출하는 태스크.
+
+    trigger: "market_open" | "market_close"
+
+    흐름:
+      1. 미국 공휴일/주말 체크 → 장 휴장이면 즉시 종료
+      2. 새 job_id 생성 후 run_scan_job 비동기 실행
+      3. latest job_id 를 Redis에 기록 (API에서 조회 가능)
+    """
+    now_et = datetime.now(ET)
+    log.info(f"[{trigger}] 자동 스캔 트리거 — {now_et.strftime('%Y-%m-%d %H:%M %Z')}")
+
+    # ── 주말 체크 ────────────────────────────────────────────
+    if now_et.weekday() >= 5:  # 5=토, 6=일
+        log.info(f"[{trigger}] 주말 휴장 — 스캔 건너뜀")
+        return
+
+    # ── 미국 주요 공휴일 체크 ────────────────────────────────
+    if _is_us_market_holiday(now_et):
+        log.info(f"[{trigger}] 공휴일 휴장 — 스캔 건너뜀")
+        return
+
+    # ── S&P 500 종목 목록 로드 ───────────────────────────────
+    try:
+        from ..pipelines.scanner import SP500_TICKERS
+        tickers = SP500_TICKERS
+    except Exception as e:
+        log.error(f"[{trigger}] 종목 목록 로드 실패: {e}")
+        return
+
+    if not tickers:
+        log.error(f"[{trigger}] 종목 목록이 비어 있음")
+        return
+
+    # ── job 생성 및 디스패치 ─────────────────────────────────
+    job_id = str(uuid.uuid4())
+
+    _save_progress(
+        job_id,
+        {
+            "job_id": job_id,
+            "status": "queued",
+            "trigger": trigger,
+            "scheduled_at": now_et.isoformat(),
+            "total": len(tickers),
+            "done": 0,
+            "pct": 0.0,
+            "cached": 0,
+            "refreshed": 0,
+            "failed": 0,
+            "current_ticker": "",
+        },
+    )
+
+    # 최신 job_id 를 Redis에 기록 (TTL 48h)
+    try:
+        r = _get_redis()
+        r.setex(LATEST_SCAN_KEY.format(trigger=trigger), 172800, job_id)
+    except Exception as e:
+        log.warning(f"[{trigger}] latest key 저장 실패: {e}")
+
+    run_scan_job.apply_async(
+        kwargs={
+            "job_id": job_id,
+            "tickers": tickers,
+            "max_workers": max_workers,
+            "force_refresh": force_refresh,
+            "period_days": period_days,
+        },
+        task_id=job_id,
+    )
+
+    log.info(
+        f"[{trigger}] 자동 스캔 시작 — job_id={job_id}, 종목={len(tickers)}개, "
+        f"ET={now_et.strftime('%H:%M')}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# 미국 공휴일 유틸
+# ─────────────────────────────────────────────────────────────
+
+_NYSE_CALENDAR = mcal.get_calendar("NYSE")
+
+
+def _is_us_market_holiday(dt: datetime) -> bool:
+    """
+    NYSE 휴장일 여부를 반환합니다.
+    pandas_market_calendars 라이브러리를 사용하므로
+    Good Friday, Juneteenth 등 모든 공휴일 및 대체 공휴일이 자동 반영됩니다.
+    """
+    ts = pd.Timestamp(dt.date())
+    return ts in _NYSE_CALENDAR.holidays().holidays
+
+
+# ─────────────────────────────────────────────────────────────
+# 기존: 캐시 웜업 태스크
+# ─────────────────────────────────────────────────────────────
+
 @celery_app.task(name="scan_tasks.warmup_cache_task", ignore_result=True)  # type: ignore[untyped-decorator]
 def warmup_cache_task() -> str:
     """
@@ -186,11 +319,10 @@ def warmup_cache_task() -> str:
     from ..pipelines.scanner import SP500_TICKERS
 
     log.info(f"🔄 캐시 웜업 시작: {len(SP500_TICKERS)} 종목")
-    
+
     success = 0
     failed = 0
-    
-    # 웜업 시에는 무조건 yfinance를 호출하여 캐시를 덮어씌웁니다. (force_refresh=True)
+
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = {
             executor.submit(fetch_stock_data, ticker, 400, True): ticker

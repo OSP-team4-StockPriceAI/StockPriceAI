@@ -1,9 +1,10 @@
 """GET /api/v1/technical/{ticker} 엔드포인트 테스트"""
 
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 from fastapi.testclient import TestClient
-from unittest.mock import MagicMock, patch
 
 
 def _make_df(n: int = 100) -> pd.DataFrame:
@@ -106,7 +107,6 @@ def test_get_technical_unexpected_exception_returns_500(client: TestClient) -> N
 # 추가 엣지케이스 테스트
 # ─────────────────────────────────────────────────────────────
 
-import numpy as np
 import pandas as pd
 
 

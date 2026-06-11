@@ -169,8 +169,7 @@ def test_run_backtest_returns_portfolio_for_dummy_predictor():
     assert backtest["n_trades"] >= 0
     assert backtest["strategy_return_pct"] == round((backtest["final_capital"] / 10000 - 1) * 100, 2)
 
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 
 def make_full_feature_df(length: int = 100) -> pd.DataFrame:
@@ -524,14 +523,14 @@ class TestLSTMPredictorAvailableFramework:
 
 class TestPredictLstmHistoryProba:
     def test_untrained_returns_half(self):
-        from app.models.predictor import predict_lstm_history_proba, LSTMPredictor
+        from app.models.predictor import LSTMPredictor, predict_lstm_history_proba
         pred = LSTMPredictor()
         df = make_full_feature_df(50)
         series = predict_lstm_history_proba(pred, df)
         assert (series == 0.5).all()
 
     def test_short_data_returns_half(self):
-        from app.models.predictor import predict_lstm_history_proba, LSTMPredictor
+        from app.models.predictor import LSTMPredictor, predict_lstm_history_proba
         pred = LSTMPredictor(sequence_length=30)
         pred.is_trained = True
         pred.feature_cols = ["RSI14"]
