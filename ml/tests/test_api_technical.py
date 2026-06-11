@@ -100,3 +100,26 @@ def test_get_technical_unexpected_exception_returns_500(client: TestClient) -> N
         resp = client.get("/api/v1/technical/AAPL")
 
     assert resp.status_code == 500
+
+
+# ─────────────────────────────────────────────────────────────
+# 추가 엣지케이스 테스트
+# ─────────────────────────────────────────────────────────────
+
+import numpy as np
+import pandas as pd
+
+
+def test_get_technical_no_data_returns_404_v2(client: TestClient) -> None:
+    """fetch_stock_data None 반환 시 404 (추가 확인)."""
+    with patch("app.pipelines.fetcher.fetch_stock_data", return_value=(None, None)):
+        resp = client.get("/api/v1/technical/TOTALLY_INVALID_TICKER")
+    assert resp.status_code == 404
+
+
+def test_get_technical_runtime_error_returns_500_v2(client: TestClient) -> None:
+    """내부 RuntimeError 시 500 (추가 확인)."""
+    with patch("app.pipelines.fetcher.fetch_stock_data",
+               side_effect=RuntimeError("unexpected error")):
+        resp = client.get("/api/v1/technical/AAPL")
+    assert resp.status_code == 500

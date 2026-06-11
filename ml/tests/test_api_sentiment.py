@@ -60,8 +60,11 @@ def _make_news_df(n: int = 2) -> pd.DataFrame:
 
 def test_get_sentiment_success_returns_200(client: TestClient) -> None:
     """정상 요청 시 SentimentResponse 스키마에 맞는 200 응답을 반환한다."""
-    with patch("app.pipelines.fetcher.fetch_stock_data", return_value=(None, {"shortName": "Apple", "sector": "Tech", "beta": 1.2})), \
-         patch("app.models.sentiment.analyze_news_sentiment", return_value=(_make_news_df(2), _make_summary(2))):
+    info = {"shortName": "Apple", "sector": "Tech", "beta": 1.2}
+    with patch("app.pipelines.fetcher.fetch_stock_data",
+               return_value=(None, info)), \
+         patch("app.models.sentiment.analyze_news_sentiment",
+               return_value=(_make_news_df(2), _make_summary(2))):
         resp = client.get("/api/v1/sentiment/AAPL")
 
     assert resp.status_code == 200
@@ -83,7 +86,8 @@ def test_get_sentiment_no_news_returns_empty_list(client: TestClient) -> None:
                      "positive_pct": 0.0, "negative_pct": 0.0, "neutral_pct": 0.0}
 
     with patch("app.pipelines.fetcher.fetch_stock_data", return_value=(None, {})), \
-         patch("app.models.sentiment.analyze_news_sentiment", return_value=(pd.DataFrame(), empty_summary)):
+         patch("app.models.sentiment.analyze_news_sentiment",
+               return_value=(pd.DataFrame(), empty_summary)):
         resp = client.get("/api/v1/sentiment/AAPL")
 
     assert resp.status_code == 200
@@ -96,7 +100,8 @@ def test_get_sentiment_no_news_returns_empty_list(client: TestClient) -> None:
 def test_get_sentiment_use_finbert_param_passed(client: TestClient) -> None:
     """use_finbert=true 파라미터가 analyze_news_sentiment에 전달된다."""
     with patch("app.pipelines.fetcher.fetch_stock_data", return_value=(None, {})), \
-         patch("app.models.sentiment.analyze_news_sentiment", return_value=(pd.DataFrame(), _make_summary(0))) as mock_analyze:
+         patch("app.models.sentiment.analyze_news_sentiment",
+               return_value=(pd.DataFrame(), _make_summary(0))) as mock_analyze:
         client.get("/api/v1/sentiment/AAPL?use_finbert=true")
 
     call_kwargs = mock_analyze.call_args[1]

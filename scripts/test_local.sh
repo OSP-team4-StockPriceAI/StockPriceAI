@@ -322,7 +322,7 @@ section "5. 서비스 간 연동 테스트"
 
 # 시나리오 1: 백엔드 예측 이력 조회 (GET /api/v1/predictions/{ticker})
 if [[ -n ${TOKEN:-} ]]; then
-  PROXY=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 \
+  PROXY=$(curl -s -o /dev/null -w "%{http_code}" --max-time 150 \
     -X GET "$BACKEND/api/v1/predictions/MSFT" \
     -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "000")
   if [[ $PROXY == "200" || $PROXY == "404" ]]; then

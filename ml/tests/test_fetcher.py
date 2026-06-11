@@ -578,3 +578,76 @@ class TestGetMarketContext:
 
         ret = context.get("benchmark_3mo_return", 0)
         assert ret == round(ret, 2)
+
+# ─────────────────────────────────────────────────────────────
+# get_recent_SP500_tickers.py 테스트
+# ─────────────────────────────────────────────────────────────
+
+from unittest.mock import MagicMock, patch
+
+class TestSP500Tickers:
+    def test_normalize_ticker(self):
+        from app.pipelines.get_recent_SP500_tickers import _normalize_ticker
+        assert _normalize_ticker("BRK.B") == "BRK-B"
+        assert _normalize_ticker("AAPL") == "AAPL"
+
+    def test_fetch_from_wikipedia_network_failure(self):
+        """네트워크 실패 시 빈 리스트 반환."""
+        from app.pipelines.get_recent_SP500_tickers import _fetch_from_wikipedia
+        with patch("urllib.request.urlopen", side_effect=Exception("Network error")):
+            result = _fetch_from_wikipedia()
+        assert result == []
+
+    def test_get_sp500_tickers_uses_fallback_when_fetch_fails(self):
+        from app.pipelines.get_recent_SP500_tickers import get_sp500_tickers, _FALLBACK_TICKERS
+        get_sp500_tickers.cache_clear()
+        with patch("app.pipelines.get_recent_SP500_tickers._fetch_from_wikipedia", return_value=[]):
+            result = get_sp500_tickers()
+        assert len(result) > 0
+        assert "AAPL" in result
+        get_sp500_tickers.cache_clear()
+
+    def test_get_sp500_tickers_deduplicates(self):
+        from app.pipelines.get_recent_SP500_tickers import get_sp500_tickers
+        get_sp500_tickers.cache_clear()
+        with patch("app.pipelines.get_recent_SP500_tickers._fetch_from_wikipedia",
+                   return_value=["AAPL", "MSFT", "AAPL"]):
+            result = get_sp500_tickers()
+        assert result.count("AAPL") == 1
+        get_sp500_tickers.cache_clear()
+
+    def test_refresh_sp500_tickers(self):
+        from app.pipelines.get_recent_SP500_tickers import refresh_sp500_tickers
+        with patch("app.pipelines.get_recent_SP500_tickers._fetch_from_wikipedia",
+                   return_value=["TEST1", "TEST2"]):
+            result = refresh_sp500_tickers()
+        assert "TEST1" in result
+
+    def test_fetch_from_wikipedia_no_symbol_column(self):
+        """파싱했지만 Symbol 컬럼이 없을 때 빈 리스트."""
+        from app.pipelines.get_recent_SP500_tickers import _fetch_from_wikipedia
+        mock_df = pd.DataFrame({"Company": ["Apple"], "HQ": ["Cupertino"]})
+        with patch("urllib.request.urlopen") as mock_open, \
+             patch("pandas.read_html", return_value=[mock_df]):
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = b"<html></html>"
+            mock_resp.__enter__ = lambda s: s
+            mock_resp.__exit__ = MagicMock(return_value=False)
+            mock_open.return_value = mock_resp
+            result = _fetch_from_wikipedia()
+        assert result == []
+
+    def test_fetch_from_wikipedia_success(self):
+        """파싱 성공 시 티커 리스트 반환."""
+        from app.pipelines.get_recent_SP500_tickers import _fetch_from_wikipedia
+        mock_df = pd.DataFrame({"Symbol": ["AAPL", "MSFT", "BRK.B"]})
+        with patch("urllib.request.urlopen") as mock_open, \
+             patch("pandas.read_html", return_value=[mock_df]):
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = b"<html></html>"
+            mock_resp.__enter__ = lambda s: s
+            mock_resp.__exit__ = MagicMock(return_value=False)
+            mock_open.return_value = mock_resp
+            result = _fetch_from_wikipedia()
+        assert "AAPL" in result
+        assert "BRK-B" in result  # 정규화됨

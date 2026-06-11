@@ -18,12 +18,10 @@ sentiment.py 테스트 모듈
   - add_sentiment_to_features
 """
 
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from datetime import datetime
+from unittest.mock import patch
 
-import numpy as np
 import pandas as pd
-import pytest
 
 from app.models.sentiment import (
     _KeywordFallback,
