@@ -321,12 +321,15 @@ fi
 section "5. 서비스 간 연동 테스트"
 
 # 시나리오 1: 백엔드 예측 이력 조회 (GET /api/v1/predictions/{ticker})
+# --skip-ml 시 DB에 예측 데이터가 없으므로 ML을 호출하게 되고 503이 정상 응답임
 if [[ -n ${TOKEN:-} ]]; then
   PROXY=$(curl -s -o /dev/null -w "%{http_code}" --max-time 150 \
     -X GET "$BACKEND/api/v1/predictions/MSFT" \
     -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "000")
   if [[ $PROXY == "200" || $PROXY == "404" ]]; then
     pass "시나리오 1: Backend 예측 이력 조회 → HTTP $PROXY"
+  elif [[ $PROXY == "503" && $SKIP_ML == true ]]; then
+    pass "시나리오 1: Backend 예측 이력 조회 → HTTP 503 (ML 없음, 정상)"
   else
     fail "시나리오 1: Backend 예측 이력 조회 → HTTP $PROXY"
   fi
