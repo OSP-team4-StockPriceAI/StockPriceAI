@@ -5,6 +5,9 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from ....models.sentiment import analyze_news_sentiment
+from ....pipelines.fetcher import fetch_stock_data
+
 router = APIRouter()
 log = logging.getLogger("stockai.api.sentiment")
 
@@ -57,9 +60,6 @@ async def get_sentiment(
     - **signal**: BULLISH / NEUTRAL / BEARISH
     """
     try:
-        from ....models.sentiment import analyze_news_sentiment
-        from ....pipelines.fetcher import fetch_stock_data
-
         ticker = ticker.strip().upper()
 
         _, info = fetch_stock_data(ticker, period_days=90)

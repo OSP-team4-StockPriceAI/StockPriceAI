@@ -670,3 +670,31 @@ class TestSP500Tickers:
             result = _fetch_from_wikipedia()
         assert "AAPL" in result
         assert "BRK-B" in result  # 정규화됨
+
+def test_fetch_stock_data_force_refresh_skips_cache():
+    """force_refresh=True이면 캐시를 무시하고 yfinance로 수집한다."""
+    from unittest.mock import MagicMock, patch
+    import pandas as pd
+    from app.pipelines.fetcher import fetch_stock_data
+
+    n = 30
+    mock_df = pd.DataFrame(
+        {
+            "Open": [100.0] * n,
+            "High": [110.0] * n,
+            "Low": [90.0] * n,
+            "Close": [105.0] * n,
+            "Volume": [1000] * n,
+        },
+        index=pd.date_range("2024-01-01", periods=n),
+    )
+    mock_df.index.name = "Date"
+
+    with patch("app.pipelines.fetcher.yf.Ticker") as mock_ticker:
+        inst = MagicMock()
+        inst.history.return_value = mock_df
+        inst.info = {"shortName": "Apple"}
+        mock_ticker.return_value = inst
+        df, info = fetch_stock_data("AAPL", force_refresh=True)
+
+    assert df is not None
