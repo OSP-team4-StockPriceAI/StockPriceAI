@@ -221,7 +221,11 @@ def merge_sentiment_into_df(
     sent_df = load_sentiment_history(ticker, limit=limit)
 
     df = df.copy()
-    if df.index.name == "Date" or isinstance(df.index, pd.DatetimeIndex):
+    if isinstance(df.index, pd.DatetimeIndex):
+        # DatetimeIndex → "Date" 컬럼으로 추출 (reset_index 사용 시 index.name이
+        # None이면 컬럼명이 "index"가 되어 KeyError 발생하므로 직접 할당)
+        df["Date"] = df.index.strftime("%Y-%m-%d")
+    elif df.index.name == "Date":
         df = df.reset_index()
         df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
     elif "Date" not in df.columns:

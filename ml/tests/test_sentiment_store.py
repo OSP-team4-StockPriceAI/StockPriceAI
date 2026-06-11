@@ -564,6 +564,7 @@ class TestMergeSentimentIntoDf:
         assert "Sentiment_Score" in result.columns
         assert "Sentiment_Positive" in result.columns
         assert "Sentiment_Negative" in result.columns
+        assert "Sentiment_Missing" in result.columns
 
     def test_matched_dates_have_correct_sentiment_score(self):
         ohlcv = _make_ohlcv_df(["2024-01-01", "2024-01-02"])
@@ -579,6 +580,10 @@ class TestMergeSentimentIntoDf:
             result = merge_sentiment_into_df(ohlcv, "AAPL")
 
         assert result.loc[result["Date"] == "2024-01-03", "Sentiment_Score"].iloc[0] == 0.0
+        # 뉴스 없는 날은 Sentiment_Missing=1
+        assert result.loc[result["Date"] == "2024-01-03", "Sentiment_Missing"].iloc[0] == 1.0
+        # 뉴스 있는 날은 Sentiment_Missing=0
+        assert result.loc[result["Date"] == "2024-01-01", "Sentiment_Missing"].iloc[0] == 0.0
 
     def test_empty_sentiment_history_fills_all_zeros(self):
         ohlcv = _make_ohlcv_df(["2024-01-01", "2024-01-02"])
@@ -588,6 +593,7 @@ class TestMergeSentimentIntoDf:
         assert (result["Sentiment_Score"] == 0.0).all()
         assert (result["Sentiment_Positive"] == 0.0).all()
         assert (result["Sentiment_Negative"] == 0.0).all()
+        assert (result["Sentiment_Missing"] == 1.0).all()
 
     def test_row_count_preserved_after_merge(self):
         ohlcv = _make_ohlcv_df(["2024-01-01", "2024-01-02", "2024-01-03"])
@@ -597,15 +603,25 @@ class TestMergeSentimentIntoDf:
         assert len(result) == 3
 
     def test_datetime_index_df_handled(self):
-        """DatetimeIndex를 가진 df도 Date 컬럼으로 변환되어 merge 가능해야 함."""
+        """DatetimeIndex(index.name=None)를 가진 df도 KeyError 없이 merge 가능해야 함.
+
+        버그 케이스: reset_index() 시 index.name이 None이면 컬럼명이 "index"가 되어
+        df["Date"] KeyError 발생 → index.strftime()으로 직접 추출하도록 수정됨.
+        """
         dates = pd.date_range("2024-01-01", periods=3, freq="B")
         close = np.linspace(100.0, 103.0, 3)
         ohlcv = pd.DataFrame({"Close": close}, index=dates)
 
+        # 전제: Date 컬럼 없고, index.name은 None, DatetimeIndex
+        assert "Date" not in ohlcv.columns
+        assert ohlcv.index.name is None
+        assert isinstance(ohlcv.index, pd.DatetimeIndex)
+
+        date_strs = dates.strftime("%Y-%m-%d").tolist()
         sent_df = pd.DataFrame({
-            "date":              ["2024-01-01", "2024-01-02", "2024-01-03"],
-            "avg_sentiment":     [0.2, 0.3, 0.4],
-            "Sentiment_Score":   [0.2, 0.3, 0.4],
+            "date":               date_strs,
+            "avg_sentiment":      [0.2, 0.3, 0.4],
+            "Sentiment_Score":    [0.2, 0.3, 0.4],
             "Sentiment_Positive": [0.2, 0.3, 0.4],
             "Sentiment_Negative": [0.0, 0.0, 0.0],
         })
@@ -613,7 +629,12 @@ class TestMergeSentimentIntoDf:
             result = merge_sentiment_into_df(ohlcv, "AAPL")
 
         assert "Sentiment_Score" in result.columns
-        assert result["Sentiment_Score"].notna().any()
+        assert "Sentiment_Missing" in result.columns
+        assert len(result) == 3
+        assert result["Sentiment_Score"].notna().all()
+        assert (result["Sentiment_Score"] > 0).all()
+        # 모든 날짜가 매칭됐으므로 Sentiment_Missing은 전부 0
+        assert (result["Sentiment_Missing"] == 0.0).all()
 
     def test_no_date_column_or_index_fills_zeros(self):
         """Date 컬럼도 DatetimeIndex도 없으면 감정지수 0으로 채워야 함."""
@@ -622,6 +643,7 @@ class TestMergeSentimentIntoDf:
             result = merge_sentiment_into_df(ohlcv, "AAPL")
 
         assert (result["Sentiment_Score"] == 0.0).all()
+        assert (result["Sentiment_Missing"] == 1.0).all()
 
     def test_original_df_not_mutated(self):
         ohlcv = _make_ohlcv_df(["2024-01-01", "2024-01-02"])
