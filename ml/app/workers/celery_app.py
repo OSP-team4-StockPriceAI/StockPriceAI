@@ -1,7 +1,14 @@
+import logging
+
 from celery import Celery
 from celery.schedules import crontab
 
 from ..core.config import settings
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 celery_app = Celery(
     "stockai_ml",

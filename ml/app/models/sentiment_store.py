@@ -148,7 +148,7 @@ async def save_sentiment_to_backend_async(
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(url, json=payload)
             resp.raise_for_status()
-        data = resp.json()
+            data = resp.json()
         log.info(
             f"감정지수 배치 저장(async): {ticker} — "
             f"저장 {data.get('saved', 0)}건, 스킵 {data.get('skipped', 0)}건"

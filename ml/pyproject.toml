@@ -29,6 +29,7 @@ torch = "^2.3.0"
 
 # NLP
 vaderSentiment = "^3.3.2"
+httpx = "^0.27.0"
 
 # Visualization
 plotly = "^5.20.0"

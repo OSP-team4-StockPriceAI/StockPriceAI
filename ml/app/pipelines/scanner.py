@@ -194,6 +194,7 @@ def analyze_single_ticker(ticker: str, period_days: int = 400) -> dict[str, Any]
                 ticker=ticker,
                 company_name=info.get("shortName", "") if info else "",
                 sector=info.get("sector", "") if info else "",
+                use_finbert=False,
             )
             # news_df를 날짜별 그룹핑 후 배치 저장 (중복 날짜 skip)
             save_sentiment_to_backend(ticker, news_df)
@@ -212,8 +213,8 @@ def analyze_single_ticker(ticker: str, period_days: int = 400) -> dict[str, Any]
                 if df[col].iloc[-1] == 0.0:
                     df.loc[df.index[-1], col] = val
             include_sentiment = True
-        except Exception:
-            pass  # 감정지수 실패해도 기술지표만으로 예측 계속
+        except Exception as e:
+            log.warning(f"[{ticker}] 감정지수 수집 실패 — 기술지표만으로 예측: {e}")
 
         pred_m = EnsemblePredictor(scanner_mode=True)
         metrics = pred_m.train(df, include_sentiment=include_sentiment, force_lstm=False)
