@@ -182,4 +182,4 @@ def purge_old_sentiments(
     db.commit()
     if deleted:
         log.info(f"만료 감정지수 삭제: {ticker} — {deleted}건 (cutoff: {cutoff})")
-    return deleted
+    return int(deleted)

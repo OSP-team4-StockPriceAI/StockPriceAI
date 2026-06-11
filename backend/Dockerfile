@@ -13,6 +13,8 @@ WORKDIR /app
 COPY pyproject.toml poetry.lock* ./
 RUN poetry install --no-root --only main
 
+COPY alembic ./alembic
+COPY alembic.ini ./
 COPY app ./app
 
 # ── development ───────────────────────────────────────────────
