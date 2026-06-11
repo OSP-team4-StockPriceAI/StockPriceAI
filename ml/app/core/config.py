@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     max_lstm_samples: int = int(os.getenv("MAX_LSTM_SAMPLES", "3000"))
     lstm_device: str = os.getenv("LSTM_DEVICE", "cpu")  # EC2에는 GPU 없음
 
+    # Backend 서비스 URL (감정지수 저장/조회)
+    backend_url: str = os.getenv("BACKEND_URL", "http://backend:8000")
+
     # CORS
     allowed_origins: list[str] = [
         "http://localhost:3000",
