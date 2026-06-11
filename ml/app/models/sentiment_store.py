@@ -95,7 +95,7 @@ def _group_by_date(
             "signal":           signal,
         })
 
-    items.sort(key=lambda x: x["date"])
+    items.sort(key=lambda x: str(x["date"]))
     return items
 
 
@@ -173,7 +173,7 @@ def purge_old_sentiments(
     try:
         resp = httpx.delete(url, params={"period_days": period_days}, timeout=timeout)
         resp.raise_for_status()
-        deleted = resp.json().get("deleted", 0)
+        deleted = int(resp.json().get("deleted", 0))
         if deleted:
             log.info(f"만료 감정지수 삭제: {ticker} — {deleted}건")
         return deleted
@@ -222,14 +222,14 @@ def merge_sentiment_into_df(
     sent_df = load_sentiment_history(ticker, limit=limit)
 
     df = df.copy()
-    if "Date" not in df.columns:
-        if isinstance(df.index, pd.DatetimeIndex):
-            df["Date"] = df.index.strftime("%Y-%m-%d")
-        else:
-            log.warning("merge_sentiment_into_df: Date 컬럼/DatetimeIndex 없음 — 감정지수 0으로 채움")
-            for col in ["Sentiment_Score", "Sentiment_Positive", "Sentiment_Negative"]:
-                df[col] = 0.0
-            return df
+    if df.index.name == "Date" or isinstance(df.index, pd.DatetimeIndex):
+        df = df.reset_index()
+        df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
+    elif "Date" not in df.columns:
+        log.warning("merge_sentiment_into_df: Date 컬럼/DatetimeIndex 없음 — 감정지수 0으로 채움")
+        for col in ["Sentiment_Score", "Sentiment_Positive", "Sentiment_Negative"]:
+            df[col] = 0.0
+        return df
     else:
         df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
 

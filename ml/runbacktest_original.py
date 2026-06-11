@@ -484,7 +484,7 @@ def run_backtest_simulation(
 # 신규 Stacking 모델 단독 실행
 new_res = run_backtest_simulation(
     model_name="LSTM-First Stacking (LSTM -> XGB)",
-    model_cls=LSTMFirstStackingPredictor,
+    model_cls=lambda **kwargs: LSTMFirstStackingPredictor(sequence_length=30, **kwargs),
     stock_data_dict=stock_data_dict,
     tickers=TICKERS,
     start_idx=start_idx,
