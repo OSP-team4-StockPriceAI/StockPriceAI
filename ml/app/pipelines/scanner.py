@@ -21,6 +21,7 @@ import redis
 import yfinance as yf
 
 from ..core.config import PARALLEL, settings
+from .get_recent_SP500_tickers import get_sp500_tickers
 
 warnings.filterwarnings("ignore")
 
@@ -42,35 +43,9 @@ CACHE_KEY_PATTERN = "scan:ticker:*"
 # S&P 500 종목 리스트
 # ─────────────────────────────────────────────────────────────
 
-SP500_TICKERS = [
-    "AAPL", "MSFT", "NVDA", "AVGO", "META", "GOOGL", "GOOG", "TSLA", "ORCL", "CRM",
-    "AMD", "QCOM", "TXN", "INTC", "ADI", "MU", "AMAT", "LRCX", "KLAC", "MRVL",
-    "CDNS", "SNPS", "FTNT", "PANW", "CRWD", "NOW", "ADSK", "ANSS", "GDDY", "PAYC",
-    "TTWO", "EA", "AKAM", "CTSH", "EPAM", "FFIV", "JNPR", "NTAP", "STX", "WDC",
-    "HPE", "HPQ", "DELL", "CSCO", "IBM", "ACN", "INTU", "FSLR", "GLW", "KEYS",
-    "BRK-B", "JPM", "V", "MA", "BAC", "WFC", "GS", "MS", "AXP", "BLK",
-    "SCHW", "USB", "PNC", "TFC", "COF", "SPGI", "MCO", "ICE", "CME", "CBOE",
-    "AON", "MMC", "AJG", "BRO", "WTW", "AFL", "MET", "PRU", "ALL", "CB",
-    "LLY", "UNH", "JNJ", "MRK", "ABBV", "TMO", "ABT", "DHR", "BMY", "AMGN",
-    "GILD", "CVS", "CI", "HUM", "ELV", "CNC", "MOH", "MDT", "SYK", "BSX",
-    "EW", "ISRG", "RMD", "DXCM", "IDXX", "IQV", "BDX", "ZBH", "HOLX", "ALGN",
-    "AMZN", "HD", "MCD", "NKE", "SBUX", "TJX", "LOW", "BKNG", "CMG", "MAR",
-    "HLT", "CCL", "RCL", "NCLH", "MGM", "CZR", "WYNN", "LVS", "F", "GM",
-    "TSCO", "ROST", "DLTR", "DG", "BBY", "KMX", "AN", "PAG", "AZO", "ORLY",
-    "ULTA", "LEN", "PHM", "DHI", "NVR", "TOL",
-    "PG", "KO", "PEP", "COST", "WMT", "PM", "MO", "CL", "MDLZ", "KHC",
-    "GIS", "K", "CPB", "SJM", "CAG", "HRL", "MKC", "CHD", "CLX", "EL",
-    "XOM", "CVX", "COP", "EOG", "SLB", "MPC", "PSX", "VLO", "DVN", "HES",
-    "HAL", "BKR", "OXY", "APA", "MRO",
-    "CAT", "HON", "UPS", "BA", "RTX", "LMT", "NOC", "GD", "DE", "EMR",
-    "ETN", "ROK", "AME", "FTV", "CARR", "OTIS", "TDG", "HWM", "GE",
-    "WM", "RSG", "WCN", "CTAS", "PAYX", "ADP", "VRSK",
-    "LIN", "APD", "SHW", "FCX", "NEM", "NUE", "STLD",
-    "AMT", "PLD", "EQIX", "CCI", "SPG", "PSA", "EXR", "WELL", "VTR",
-    "NEE", "DUK", "SO", "D", "EXC", "AEP", "SRE", "XEL", "WEC",
-    "NFLX", "DIS", "CMCSA", "T", "VZ", "TMUS", "CHTR",
-]
-SP500_TICKERS = list(dict.fromkeys(SP500_TICKERS))
+# Wikipedia에서 최신 S&P 500 종목 목록을 동적으로 가져옵니다.
+# 네트워크 오류 시 get_recent_SP500_tickers.py 내 폴백 리스트가 자동으로 사용됩니다.
+SP500_TICKERS = get_sp500_tickers()
 
 
 # ─────────────────────────────────────────────────────────────
