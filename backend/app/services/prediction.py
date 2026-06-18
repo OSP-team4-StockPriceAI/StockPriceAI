@@ -37,8 +37,9 @@ async def get_or_fetch_predictions(
     1. DB에 해당 티커의 가장 최근 예측 기록을 가져와 24시간 이내에 생성된 "신선한(Fresh)" 데이터인지 확인합니다.
     2. 신선한 데이터가 존재하면 ML 서비스 호출 없이 바로 최신 기록(최대 limit개)을 반환합니다. (캐시 히트 ⚡)
     3. 데이터가 아예 없거나, 가장 최신 기록이 24시간을 초과하여 만료된 경우 ML 서비스를 호출해 신규 예측을 갱신합니다.
-    4. ML 서비스가 장애/타임아웃으로 실패할 경우, 24시간 이상 만료된 기존 과거 예측 기록(Stale Backup)이라도 
+    4. ML 서비스가 네트워크 장애/타임아웃으로 실패할 경우, 만료된 기존 과거 예측 기록(Stale Backup)이라도
        대체 우회 반환하여 503 크래시를 완벽히 방지합니다.
+       단, ML 서비스가 명시적인 HTTP 오류(4xx/5xx)를 반환한 경우에는 그 상태코드를 그대로 전파합니다.
     """
     ticker_upper = ticker.upper().strip()
 
@@ -56,7 +57,7 @@ async def get_or_fetch_predictions(
         # SQLite 등 테스트 환경에서 datetime에 시간대(tzinfo) 정보가 유실되는 경우를 대비해 보정합니다.
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=UTC)
-            
+
         time_diff = datetime.now(UTC) - created_at
         if time_diff < timedelta(hours=24):
             is_fresh = True
@@ -77,9 +78,13 @@ async def get_or_fetch_predictions(
     log.info(f"🔮 [{ticker_upper}] 예측 캐시가 없거나 만료(24시간 초과)됨 → ML 서비스를 호출하여 실시간 분석을 수행합니다.")
     try:
         ml_result = await _call_ml_predict(ticker_upper)
+    except HTTPException:
+        # ML 서비스가 명시적 HTTP 오류(4xx/5xx)를 반환한 경우:
+        # stale fallback 없이 그 상태코드를 클라이언트에 그대로 전달합니다.
+        # (HTTPException은 Exception의 서브클래스이므로 아래 except에서 삼켜지지 않도록 먼저 처리)
+        raise
     except Exception as e:
-        # [우아한 장애 복구 - Graceful Stale Fallback]
-        # 만료된 과거 예측 이력 중 가장 최근의 1건을 조회하여 대체 응답을 서빙합니다.
+        # 네트워크 장애 / 타임아웃 등 연결 수준 오류 → Stale Fallback 시도
         if latest_row:
             log.warning(
                 f"🔄 [{ticker_upper}] ML 서비스 장애 감지. 만료된 과거 예측 데이터(Stale Backup, 생성일: {latest_row.created_at})로 우회 반환합니다."
@@ -92,10 +97,13 @@ async def get_or_fetch_predictions(
                 .all()
             )
             return [PredictionOut.model_validate(r) for r in rows]
-        
-        # 과거 백업 데이터조차 전혀 없는 최악의 경우에만 상위로 에러 전파
+
+        # 과거 백업 데이터조차 전혀 없는 최악의 경우 503으로 응답
         log.error(f"❌ [{ticker_upper}] ML 서비스 장애 및 DB 내 과거 예측 백업본 부재: {str(e)}")
-        raise
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ML service unavailable and no cached predictions found",
+        )
 
     # 4. ML 호출 성공 시 응답을 DB에 저장
     ensemble_detail = ml_result.get("ensemble_detail") or {}
@@ -113,7 +121,7 @@ async def get_or_fetch_predictions(
     db.refresh(new_prediction)
 
     log.info(f"✅ ML 예측 결과 DB 저장 완료 및 갱신 성공: {ticker_upper} → {new_prediction.signal}")
-    
+
     # 5. 방금 추가된 신규 건을 포함하여 최신 정렬로 반환
     rows = (
         db.query(Prediction)

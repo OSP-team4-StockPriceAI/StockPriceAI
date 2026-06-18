@@ -1,5 +1,6 @@
 import os
 
+# 멀티스레드 라이브러리 충돌 방지 — import 전에 설정해야 적용됨
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -8,11 +9,8 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["REDIS_URL"] = "redis://localhost:6379/1"
 
-
-import numpy as np
-import pandas as pd
-
-# noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
 from ml.app.models.predictor import LSTMFirstStackingPredictor  # noqa: E402
 from ml.app.pipelines.fetcher import fetch_stock_data  # noqa: E402
 from ml.app.pipelines.get_recent_SP500_tickers import get_sp500_tickers  # noqa: E402
@@ -134,9 +132,8 @@ print(f"[설정] 포트폴리오 유지 종목 수 (N): {TOP_N_STOCKS}개")
 print(f"[설정] 매매 의사결정 주기: {DECISION_INTERVAL_DAYS}거래일")
 print(f"[설정] 스캐너 갱신 주기: {SCAN_REFRESH_INTERVAL_DAYS}거래일\n")
 
-import concurrent.futures
+import concurrent.futures  # noqa: E402
 
-  # noqa: E402
 print(
     f"1. {len(TICKERS)}개 실제 스캐너 후보 종목의 전체 역사적 데이터(550일)를"
     " 병렬 로드하는 중 (스레드 16개)..."
@@ -484,7 +481,7 @@ def run_backtest_simulation(
 # 신규 Stacking 모델 단독 실행
 new_res = run_backtest_simulation(
     model_name="LSTM-First Stacking (LSTM -> XGB)",
-    model_cls=LSTMFirstStackingPredictor,
+    model_cls=lambda **kwargs: LSTMFirstStackingPredictor(sequence_length=15, **kwargs),
     stock_data_dict=stock_data_dict,
     tickers=TICKERS,
     start_idx=start_idx,

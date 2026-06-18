@@ -124,7 +124,8 @@ BASE_FEATURES = [
     "Body_Size", "Upper_Shadow", "Lower_Shadow", "Is_Bullish",
     "Momentum_Normalized", "MACD_Cross",
 ]
-SENTIMENT_FEATURES = ["Sentiment_Score", "Sentiment_Positive", "Sentiment_Negative"]
+SENTIMENT_FEATURES = ["Sentiment_Score", "Sentiment_Positive",
+                             "Sentiment_Negative", "Sentiment_Missing"]
 
 
 def get_feature_columns(df: pd.DataFrame, include_sentiment: bool = True) -> list[str]:
@@ -775,9 +776,9 @@ class LSTMFirstStackingPredictor:
 
         fw = self.lstm.available_framework()
         if fw is None:
-            # PyTorch/TensorFlow 미설치: XGBoost 단독 학습으로 폴백
+            # PyTorch/TensorFlow 미설치: XGBoost 단독 학습으로 폴백 (sentiment 피처 제외)
             log.warning("PyTorch/TensorFlow 미설치 → XGBoost 단독 학습")
-            xgb_metrics = self.xgb.train(df, include_sentiment=include_sentiment)
+            xgb_metrics = self.xgb.train(df, include_sentiment=False)
             if "error" in xgb_metrics:
                 return xgb_metrics
             self.is_trained = True
@@ -793,8 +794,9 @@ class LSTMFirstStackingPredictor:
             return self.training_metrics
 
         # Step 1: OOF LSTM 확률 생성 (데이터 누출 없는 메타 피처)
-        orig_feature_cols = get_feature_columns(df, include_sentiment)
-        feature_cols = orig_feature_cols + ["LSTM_Proba"]
+        # LSTM: sentiment 피처 포함 / XGBoost: LSTM_Proba를 통해 간접 수신 (sentiment 직접 제외)
+        lstm_feature_cols = get_feature_columns(df, include_sentiment)
+        xgb_feature_cols  = get_feature_columns(df, include_sentiment=False) + ["LSTM_Proba"]
         oof_lstm_probs = _compute_oof_lstm_proba(
             df,
             sequence_length=self.sequence_length,
@@ -806,28 +808,28 @@ class LSTMFirstStackingPredictor:
         df_oof = df.copy()
         df_oof["LSTM_Proba"] = oof_lstm_probs
 
-        # Step 2: OOF 메타 피처로 XGBoost CV 평가 (cv_only=True: 최종 모델 학습 생략)
+        # Step 2: OOF 메타 피처로 XGBoost CV 평가 (sentiment 피처 제외, cv_only=True)
         xgb_metrics = self.xgb.train(
             df_oof,
-            include_sentiment=include_sentiment,
-            feature_cols=feature_cols,
+            include_sentiment=False,
+            feature_cols=xgb_feature_cols,
             cv_only=True,
         )
         if "error" in xgb_metrics:
             log.warning(f"XGBoost CV 학습 실패: {xgb_metrics.get('error')}")
             return xgb_metrics
 
-        # Step 3: 최종 LSTM 전체 데이터로 재학습
+        # Step 3: 최종 LSTM 전체 데이터로 재학습 (sentiment 피처 포함)
         lstm_metrics = self.lstm.train(df, include_sentiment=include_sentiment)
         if "error" in lstm_metrics:
             log.warning(f"LSTM 학습 실패: {lstm_metrics.get('error')}")
             return lstm_metrics
 
-        # Step 4: 최종 LSTM 확률을 피처로 추가하여 XGBoost 전체 데이터로 재학습
+        # Step 4: 최종 LSTM 확률을 피처로 추가하여 XGBoost 전체 데이터로 재학습 (sentiment 제외)
         df_full = df.copy()
         df_full["LSTM_Proba"] = predict_lstm_history_proba(self.lstm, df)
         full_xgb_metrics = self.xgb.fit_full_data(
-            df_full, include_sentiment=include_sentiment, feature_cols=feature_cols
+            df_full, include_sentiment=False, feature_cols=xgb_feature_cols
         )
         if "error" in full_xgb_metrics:
             log.warning(f"XGBoost 최종 학습 실패: {full_xgb_metrics.get('error')}")
@@ -842,7 +844,9 @@ class LSTMFirstStackingPredictor:
             "lstm_metrics": lstm_metrics,
             "xgb_metrics": xgb_metrics,
             "n_samples": xgb_metrics.get("n_samples", 0),
-            "n_features": len(feature_cols),
+            "n_features_lstm": len(lstm_feature_cols),
+            "n_features_xgb": len(xgb_feature_cols),
+            "n_features": len(xgb_feature_cols),  # 하위 호환
             "cv_accuracy_mean": xgb_metrics.get("cv_accuracy_mean", 0),
             "elapsed_sec": round(time.time() - t_total, 1),
         }

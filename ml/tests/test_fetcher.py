@@ -281,7 +281,9 @@ class TestFetchStockData:
         from app.pipelines.fetcher import fetch_stock_data
 
         mock_ticker = _make_mock_ticker(hist=_make_price_df(60))
-        type(mock_ticker).info = property(lambda self: (_ for _ in ()).throw(Exception("info error")))
+        type(mock_ticker).info = property(
+            lambda self: (_ for _ in ()).throw(Exception("info error"))
+        )
 
         with patch("app.pipelines.fetcher.yf.Ticker", return_value=mock_ticker):
             df, info = fetch_stock_data("AAPL")
@@ -311,7 +313,10 @@ class TestFetchStockData:
         cached_json = json.dumps({
             "info": {"shortName": "Apple", "trailingPE": 28.5},
             "history": [
-                {"Date": "2024-01-01T00:00:00", "Open": 100, "High": 105, "Low": 99, "Close": 104, "Volume": 1000}
+                {
+                    "Date": "2024-01-01T00:00:00",
+                    "Open": 100, "High": 105, "Low": 99, "Close": 104, "Volume": 1000,
+                }
             ]
         })
         mock_redis.return_value.get.return_value = cached_json
@@ -500,7 +505,9 @@ class TestFetchInstitutionalHolders:
 # ─────────────────────────────────────────────────────────────
 
 class TestGetMarketContext:
-    def _make_bench_ticker(self, start: float = 100.0, end: float = 110.0, n: int = 60) -> MagicMock:
+    def _make_bench_ticker(
+        self, start: float = 100.0, end: float = 110.0, n: int = 60
+    ) -> MagicMock:
         hist = pd.DataFrame(
             {"Close": np.linspace(start, end, n)},
             index=pd.date_range("2024-01-01", periods=n, freq="B"),
@@ -512,7 +519,8 @@ class TestGetMarketContext:
     def test_us_ticker_uses_sp500_benchmark(self):
         from app.pipelines.fetcher import get_market_context
 
-        with patch("app.pipelines.fetcher.yf.Ticker", return_value=self._make_bench_ticker()) as mock_yf:
+        bench = self._make_bench_ticker()
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=bench) as mock_yf:
             get_market_context("AAPL")
 
         mock_yf.assert_called_once_with("^GSPC")
@@ -520,7 +528,8 @@ class TestGetMarketContext:
     def test_ks_ticker_uses_kospi_benchmark(self):
         from app.pipelines.fetcher import get_market_context
 
-        with patch("app.pipelines.fetcher.yf.Ticker", return_value=self._make_bench_ticker()) as mock_yf:
+        bench = self._make_bench_ticker()
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=bench) as mock_yf:
             get_market_context("005930.KS")
 
         mock_yf.assert_called_once_with("^KS11")
@@ -528,7 +537,8 @@ class TestGetMarketContext:
     def test_kq_ticker_uses_kospi_benchmark(self):
         from app.pipelines.fetcher import get_market_context
 
-        with patch("app.pipelines.fetcher.yf.Ticker", return_value=self._make_bench_ticker()) as mock_yf:
+        bench = self._make_bench_ticker()
+        with patch("app.pipelines.fetcher.yf.Ticker", return_value=bench) as mock_yf:
             get_market_context("035720.KQ")
 
         mock_yf.assert_called_once_with("^KS11")
@@ -536,7 +546,10 @@ class TestGetMarketContext:
     def test_returns_benchmark_name_and_return(self):
         from app.pipelines.fetcher import get_market_context
 
-        with patch("app.pipelines.fetcher.yf.Ticker", return_value=self._make_bench_ticker(100, 110)):
+        with patch(
+            "app.pipelines.fetcher.yf.Ticker",
+            return_value=self._make_bench_ticker(100, 110),
+        ):
             context = get_market_context("AAPL")
 
         assert context["benchmark_name"] == "S&P 500"
@@ -546,7 +559,10 @@ class TestGetMarketContext:
         from app.pipelines.fetcher import get_market_context
 
         # 100 → 110: 수익률 10%
-        with patch("app.pipelines.fetcher.yf.Ticker", return_value=self._make_bench_ticker(100, 110)):
+        with patch(
+            "app.pipelines.fetcher.yf.Ticker",
+            return_value=self._make_bench_ticker(100, 110),
+        ):
             context = get_market_context("AAPL")
 
         assert abs(context["benchmark_3mo_return"] - 10.0) < 0.1
@@ -572,7 +588,10 @@ class TestGetMarketContext:
     def test_return_value_is_rounded_to_two_decimals(self):
         from app.pipelines.fetcher import get_market_context
 
-        with patch("app.pipelines.fetcher.yf.Ticker", return_value=self._make_bench_ticker(100, 107.777)):
+        with patch(
+            "app.pipelines.fetcher.yf.Ticker",
+            return_value=self._make_bench_ticker(100, 107.777),
+        ):
             context = get_market_context("AAPL")
 
         ret = context.get("benchmark_3mo_return", 0)
@@ -582,7 +601,7 @@ class TestGetMarketContext:
 # get_recent_SP500_tickers.py 테스트
 # ─────────────────────────────────────────────────────────────
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch  # noqa: E402
 
 
 class TestSP500Tickers:
@@ -651,3 +670,31 @@ class TestSP500Tickers:
             result = _fetch_from_wikipedia()
         assert "AAPL" in result
         assert "BRK-B" in result  # 정규화됨
+
+def test_fetch_stock_data_force_refresh_skips_cache():
+    """force_refresh=True이면 캐시를 무시하고 yfinance로 수집한다."""
+    from unittest.mock import MagicMock, patch
+    import pandas as pd
+    from app.pipelines.fetcher import fetch_stock_data
+
+    n = 30
+    mock_df = pd.DataFrame(
+        {
+            "Open": [100.0] * n,
+            "High": [110.0] * n,
+            "Low": [90.0] * n,
+            "Close": [105.0] * n,
+            "Volume": [1000] * n,
+        },
+        index=pd.date_range("2024-01-01", periods=n),
+    )
+    mock_df.index.name = "Date"
+
+    with patch("app.pipelines.fetcher.yf.Ticker") as mock_ticker:
+        inst = MagicMock()
+        inst.history.return_value = mock_df
+        inst.info = {"shortName": "Apple"}
+        mock_ticker.return_value = inst
+        df, info = fetch_stock_data("AAPL", force_refresh=True)
+
+    assert df is not None

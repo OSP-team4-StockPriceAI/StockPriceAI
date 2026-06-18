@@ -175,6 +175,12 @@ def analyze_single_ticker(ticker: str, period_days: int = 400) -> dict[str, Any]
     t0 = time.time()
     try:
         from ..models.predictor import EnsemblePredictor
+        from ..models.sentiment import analyze_news_sentiment
+        from ..models.sentiment_store import (
+            merge_sentiment_into_df,
+            purge_old_sentiments,
+            save_sentiment_to_backend,
+        )
         from .fetcher import fetch_stock_data
         from .technical import add_all_indicators, get_current_signals, label_training_target
 
@@ -185,8 +191,37 @@ def analyze_single_ticker(ticker: str, period_days: int = 400) -> dict[str, Any]
         df = add_all_indicators(df)
         df = label_training_target(df)  # Target 컬럼 생성 (학습에 필요)
 
+        # 감정지수: 뉴스 분석 → 날짜별 배치 저장(중복 skip) → 만료 삭제 → 이력 merge
+        include_sentiment = False
+        try:
+            news_df, sent_summary = analyze_news_sentiment(
+                ticker=ticker,
+                company_name=info.get("shortName", "") if info else "",
+                sector=info.get("sector", "") if info else "",
+                use_finbert=False,
+            )
+            # news_df를 날짜별 그룹핑 후 배치 저장 (중복 날짜 skip)
+            save_sentiment_to_backend(ticker, news_df)
+            # 학습 기간 초과 레코드 삭제
+            purge_old_sentiments(ticker, period_days)
+            # DB 이력을 학습 df에 merge
+            df = merge_sentiment_into_df(df, ticker, limit=period_days)
+            today_score = sent_summary.get("avg_sentiment", 0.0)
+            for col, val in [
+                ("Sentiment_Score",    today_score),
+                ("Sentiment_Positive", max(0.0, today_score)),
+                ("Sentiment_Negative", max(0.0, -today_score)),
+            ]:
+                if col not in df.columns:
+                    df[col] = 0.0
+                if df[col].iloc[-1] == 0.0:
+                    df.loc[df.index[-1], col] = val
+            include_sentiment = True
+        except Exception as e:
+            log.warning(f"[{ticker}] 감정지수 수집 실패 — 기술지표만으로 예측: {e}")
+
         pred_m = EnsemblePredictor(scanner_mode=True)
-        metrics = pred_m.train(df, include_sentiment=False, force_lstm=False)
+        metrics = pred_m.train(df, include_sentiment=include_sentiment, force_lstm=False)
         if "error" in metrics:
             return None
 
